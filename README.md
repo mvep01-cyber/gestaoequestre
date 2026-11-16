@@ -1,36 +1,116 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Campo Vivo
 
-## Getting Started
+Aplicação web mobile-first para gestão de Centros de Treinamento Equestre (CTE) e
+Haras. O backend usa Route Handlers do Next.js, PostgreSQL, autenticação por
+credenciais e armazenamento local de arquivos. Não há serviço Supabase.
 
-First, run the development server:
+## Requisitos
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Node.js 22 ou superior
+- Docker Desktop com Docker Compose
+
+## Primeiro uso
+
+1. Instale as dependências:
+
+   ```powershell
+   npm install
+   ```
+
+2. O arquivo `.env.local` foi criado na raiz. Confira `DATABASE_URL` e altere as
+   senhas de desenvolvimento em `compose.yaml` e `.env.local` se necessário.
+   Gere segredos locais com:
+
+   ```powershell
+   node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+   ```
+
+   Use valores aleatórios diferentes para `NEXTAUTH_SECRET` e
+   `PAYMENT_WEBHOOK_SECRET`. Não os publique nem os envie em mensagens.
+
+3. Inicie o PostgreSQL:
+
+   ```powershell
+   npm run db:up
+   ```
+
+4. Crie as tabelas, índices e gatilhos:
+
+   ```powershell
+   npm run db:setup
+   ```
+
+   O esquema está em `database/schema.sql`. A operação é idempotente para o
+   banco local deste projeto.
+
+5. Preencha `INITIAL_ADMIN_NAME`, `INITIAL_ADMIN_EMAIL`,
+   `INITIAL_ADMIN_PASSWORD` (mínimo de 12 caracteres), `INITIAL_TENANT_NAME` e
+   `INITIAL_PLAN` em `.env.local`. Crie o primeiro usuário:
+
+   ```powershell
+   npm run db:seed
+   ```
+
+   O seed cria um usuário `ADMIN` e um tenant em `TRIAL`. Para criar um
+   `SUPER_ADMIN`, defina `INITIAL_ADMIN_ROLE=SUPER_ADMIN` e execute o seed com
+   um e-mail diferente. Remova os valores `INITIAL_*` de `.env.local` depois.
+
+6. Inicie o Next.js:
+
+   ```powershell
+   npm run dev
+   ```
+
+   Acesse `http://localhost:3000`.
+
+## Banco e armazenamento
+
+- O Docker Compose inicia somente o PostgreSQL; o Next.js roda com `npm run dev`
+  no computador.
+- Os dados do PostgreSQL ficam no volume Docker `postgres_data`. `npm run db:down`
+  para o container sem apagar os dados. Não use `docker compose down -v` se quiser
+  preservá-los.
+- Uploads privados são gravados em `storage/uploads` e servidos por uma rota
+  autenticada. Essa pasta é ignorada pelo Git. Em produção, use um volume
+  persistente e faça backups; arquivos locais não são compartilhados entre várias
+  instâncias do aplicativo.
+- `DATABASE_URL` é uma credencial exclusivamente de servidor. Não use o prefixo
+  `NEXT_PUBLIC_` nem a exponha no navegador.
+- O PostgreSQL local e as senhas padrão do Compose são apenas para desenvolvimento.
+  Troque as credenciais e restrinja o acesso antes de qualquer implantação.
+
+## Autenticação e isolamento
+
+- O login usa NextAuth com e-mail e senha; as senhas são armazenadas com hash
+  bcrypt. Não há cadastro público.
+- O banco só é acessado pelo servidor Next.js. Route Handlers validam sessão,
+  perfil, plano e tenant e usam consultas parametrizadas.
+- O acesso operacional não inclui o financeiro; o plano CTE não habilita
+  reprodução.
+- A conta inicial tem perfil `ADMIN`. `SUPER_ADMIN` é criado separadamente pelo
+  seed. Para provisionar usuários `ADMIN` ou `OPERACIONAL`, defina
+  `USER_NAME`, `USER_EMAIL`, `USER_PASSWORD`, `USER_TENANT_ID` e `USER_ROLE` em
+  `.env.local`, depois execute `npm run db:user`. Use uma senha forte e remova
+  esses valores do arquivo após o uso.
+
+## Webhook de pagamento
+
+Configure `PAYMENT_WEBHOOK_SECRET` no servidor. O endpoint
+`POST /api/webhooks/pagamento` espera o cabeçalho `x-webhook-secret` e um JSON:
+
+```json
+{
+  "gateway_cobranca_id": "id-da-cobranca-no-provedor",
+  "status": "PAGO"
+}
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Antes de encaminhar eventos, valide também a assinatura original do provedor de
+pagamento. A atualização é idempotente; gatilhos do PostgreSQL ajustam o saldo e
+geram comissões configuradas.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## PWA
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+O manifesto fica em `src/app/manifest.ts`; `public/sw.js` armazena somente os
+ícones estáticos. Páginas autenticadas e respostas da API não são armazenadas em
+cache.

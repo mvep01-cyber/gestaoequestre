@@ -6,16 +6,26 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:setup": "node --env-file=.env.local scripts/db-setup.mjs",
+    "db:seed": "node --env-file=.env.local scripts/create-admin.mjs",
+    "db:user": "node --env-file=.env.local scripts/create-user.mjs"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "lucide-react": "^1.73.0",
     "next": "16.4.6",
+    "next-auth": "^4.24.15",
+    "pg": "^8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "4.3.3",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
