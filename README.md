@@ -92,6 +92,8 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   Registros antigos sem autor identificado ficam visíveis somente ao ADMIN, que
   pode consultar, cadastrar, alterar e excluir clientes. O acesso operacional
   não inclui o financeiro; o plano CTE não habilita reprodução.
+- O cadastro separado CTE/Haras usa os mesmos dados do formulário de clientes,
+  exige a escolha do tipo e fica disponível somente para usuários ADMIN.
 - A conta inicial tem perfil `ADMIN`. `SUPER_ADMIN` é criado separadamente pelo
   seed. Para provisionar usuários `ADMIN` ou `OPERACIONAL`, defina
   `USER_NAME`, `USER_EMAIL`, `USER_PASSWORD`, `USER_TENANT_ID` e `USER_ROLE` em

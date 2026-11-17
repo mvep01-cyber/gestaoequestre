@@ -50,6 +50,10 @@ type BillingOwner = {
   data_fim: string | null;
 };
 
+type CteHarasRegistration = BillingOwner & {
+  tipo_cadastro: "CTE" | "HARAS";
+};
+
 type PixAccount = {
   id: string;
   nome: string;
@@ -243,6 +247,19 @@ export default async function DashboardPage() {
            order by nome`,
           [tenantId, user.id],
         );
+  const cteHarasRegistrationsQuery =
+    user.perfil === "ADMIN"
+      ? pool.query<CteHarasRegistration>(
+          `select id, tipo_cadastro, nome, telefone_whatsapp, documento, cpf, rg,
+                  data_nascimento::text as data_nascimento, idade, profissao,
+                  endereco_completo, numero_socio_abccmm,
+                  data_inicio::text as data_inicio, data_fim::text as data_fim
+           from public.cadastros_cte_haras
+           where tenant_id = $1
+           order by nome`,
+          [tenantId],
+        )
+      : Promise.resolve({ rows: [] as CteHarasRegistration[] });
   const localDay = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Sao_Paulo",
     year: "numeric",
@@ -259,6 +276,7 @@ export default async function DashboardPage() {
     trainingCountResult,
     trainingsResult,
     ownerResult,
+    cteHarasRegistrationsResult,
     accountResult,
     financeCountResult,
     financeResult,
@@ -312,6 +330,7 @@ export default async function DashboardPage() {
       [tenantId, dayStart.toISOString(), dayEnd.toISOString()],
     ),
     ownerResultQuery,
+    cteHarasRegistrationsQuery,
     isManager
       ? pool.query<PixAccount & { saldo_atual: string }>(
           `select id, nome, chave_pix, saldo_atual
@@ -406,6 +425,13 @@ export default async function DashboardPage() {
           owner.numero_socio_abccmm === null
             ? null
             : Number(owner.numero_socio_abccmm),
+      }))}
+      cteHarasRegistrations={cteHarasRegistrationsResult.rows.map((registration) => ({
+        ...registration,
+        numero_socio_abccmm:
+            registration.numero_socio_abccmm === null
+              ? null
+              : Number(registration.numero_socio_abccmm),
       }))}
     />
   );

@@ -72,6 +72,30 @@ alter table if exists public.proprietarios
 create index if not exists proprietarios_tenant_creator_idx
   on public.proprietarios (tenant_id, criado_por);
 
+create table if not exists public.cadastros_cte_haras (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.tenants (id) on delete cascade,
+  criado_por uuid references public.usuarios (id) on delete set null,
+  tipo_cadastro text not null check (tipo_cadastro in ('CTE', 'HARAS')),
+  nome text not null,
+  telefone_whatsapp text not null,
+  documento text not null,
+  cpf text not null,
+  rg text not null,
+  data_nascimento date not null,
+  idade integer not null,
+  profissao text not null,
+  endereco_completo text not null,
+  numero_socio_abccmm numeric(12, 5) not null
+    check (numero_socio_abccmm between 0 and 999999.99999),
+  data_inicio date not null,
+  data_fim date not null,
+  unique (id, tenant_id)
+);
+
+create index if not exists cadastros_cte_haras_tenant_nome_idx
+  on public.cadastros_cte_haras (tenant_id, nome);
+
 create table if not exists public.equinos (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants (id) on delete cascade,

@@ -1347,7 +1347,8 @@ input:focus-visible {
   content: " *";
 }
 
-.client-form input {
+.client-form input,
+.client-form select {
   width: 100%;
   min-height: 48px;
   margin-top: 3px;

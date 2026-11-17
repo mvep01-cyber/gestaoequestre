@@ -146,6 +146,107 @@ function calculateAge(dateOfBirth: string): number {
   return age;
 }
 
+type ClientFields = {
+  nome: string;
+  telefone_whatsapp: string;
+  documento: string;
+  cpf: string;
+  rg: string;
+  data_nascimento: string;
+  idade: number;
+  profissao: string;
+  endereco_completo: string;
+  numero_socio_abccmm: number;
+  data_inicio: string;
+  data_fim: string;
+};
+
+type ClientFieldsValidation =
+  | { valid: true; fields: ClientFields }
+  | { valid: false; message: string };
+
+function validateClientFields(body: Record<string, unknown>): ClientFieldsValidation {
+  const missingField = getMissingClientField(body);
+  if (missingField) {
+    return { valid: false, message: `${missingField} - Preenchimento Obrigatório.` };
+  }
+
+  const nome = sanitizeText(body.nome, 120);
+  const telefone = parseOptionalText(body.telefone_whatsapp, 20);
+  const documento = parseOptionalText(body.documento, 40);
+  const cpf = parseOptionalText(body.cpf, 20);
+  const rg = parseOptionalText(body.rg, 30);
+  const profissao = parseOptionalText(body.profissao, 120);
+  const enderecoCompleto = parseOptionalText(body.endereco_completo, 400);
+  const numeroSocio = parseOptionalDecimal(body.numero_socio_abccmm);
+
+  if (!nome) {
+    return { valid: false, message: "Informe um nome válido para o cliente." };
+  }
+  if (
+    !telefone.valid ||
+    !telefone.value ||
+    !documento.valid ||
+    !documento.value ||
+    !cpf.valid ||
+    !cpf.value ||
+    !rg.valid ||
+    !rg.value ||
+    !profissao.valid ||
+    !profissao.value ||
+    !enderecoCompleto.valid ||
+    !enderecoCompleto.value
+  ) {
+    return { valid: false, message: "Confira o tamanho e o formato dos dados informados." };
+  }
+  if (cpf.value.replace(/\D/g, "").length !== 11) {
+    return { valid: false, message: "CPF deve conter 11 dígitos." };
+  }
+
+  const dataNascimento = parseOptionalDate(body.data_nascimento);
+  const dataInicio = parseOptionalDate(body.data_inicio);
+  const dataFim = parseOptionalDate(body.data_fim);
+  if (!dataNascimento) {
+    return { valid: false, message: "Data de nascimento inválida." };
+  }
+  if (!dataInicio || !dataFim) {
+    return { valid: false, message: "Data de início ou fim inválida." };
+  }
+  if (dataFim < dataInicio) {
+    return { valid: false, message: "A data fim não pode ser anterior à data de início." };
+  }
+  if (
+    !numeroSocio.valid ||
+    numeroSocio.value === null ||
+    numeroSocio.value < 0 ||
+    numeroSocio.value > 999999.99999
+  ) {
+    return { valid: false, message: "Número do sócio ABCCMM inválido." };
+  }
+
+  return {
+    valid: true,
+    fields: {
+      nome,
+      telefone_whatsapp: telefone.value,
+      documento: documento.value,
+      cpf: cpf.value,
+      rg: rg.value,
+      data_nascimento: dataNascimento,
+      idade: calculateAge(dataNascimento),
+      profissao: profissao.value,
+      endereco_completo: enderecoCompleto.value,
+      numero_socio_abccmm: numeroSocio.value,
+      data_inicio: dataInicio,
+      data_fim: dataFim,
+    },
+  };
+}
+
+function isRegistrationType(value: unknown): value is "CTE" | "HARAS" {
+  return value === "CTE" || value === "HARAS";
+}
+
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) {
     return errorResponse("Origem da solicitação inválida.", 403);
@@ -431,53 +532,11 @@ export async function POST(request: Request) {
         if ((user.perfil !== "ADMIN" && user.perfil !== "OPERACIONAL") || !hasTenant) {
           return errorResponse("Ação permitida somente a usuários vinculados a um centro.", 403);
         }
-        const missingField = getMissingClientField(body);
-        if (missingField) {
-          return errorResponse(`${missingField} - Preenchimento Obrigatório.`, 400);
+        const validation = validateClientFields(body);
+        if (!validation.valid) {
+          return errorResponse(validation.message, 400);
         }
-        const nome = sanitizeText(body.nome, 120);
-        const telefone = parseOptionalText(body.telefone_whatsapp, 20);
-        const documento = parseOptionalText(body.documento, 40);
-        const cpf = parseOptionalText(body.cpf, 20);
-        const rg = parseOptionalText(body.rg, 30);
-        const profissao = parseOptionalText(body.profissao, 120);
-        const enderecoCompleto = parseOptionalText(body.endereco_completo, 400);
-        const numeroSocio = parseOptionalDecimal(body.numero_socio_abccmm);
-        if (!nome) {
-          return errorResponse("Informe um nome válido para o cliente.", 400);
-        }
-        if (
-          !telefone.valid ||
-          !documento.valid ||
-          !cpf.valid ||
-          !rg.valid ||
-          !profissao.valid ||
-          !enderecoCompleto.valid
-        ) {
-          return errorResponse("Confira o tamanho e o formato dos dados informados.", 400);
-        }
-        if (cpf.value && cpf.value.replace(/\D/g, "").length !== 11) {
-          return errorResponse("CPF deve conter 11 dígitos.", 400);
-        }
-        const dataNascimento = parseOptionalDate(body.data_nascimento);
-        const dataInicio = parseOptionalDate(body.data_inicio);
-        const dataFim = parseOptionalDate(body.data_fim);
-        if (dataNascimento === undefined) {
-          return errorResponse("Data de nascimento inválida.", 400);
-        }
-        if (dataInicio === undefined || dataFim === undefined) {
-          return errorResponse("Data de início ou fim inválida.", 400);
-        }
-        if (dataInicio && dataFim && dataFim < dataInicio) {
-          return errorResponse("A data fim não pode ser anterior à data de início.", 400);
-        }
-        if (
-          !numeroSocio.valid ||
-          (numeroSocio.value !== null &&
-            (numeroSocio.value < 0 || numeroSocio.value > 999999.99999))
-        ) {
-          return errorResponse("Número do sócio ABCCMM inválido.", 400);
-        }
+        const fields = validation.fields;
 
         const result = await pool.query(
           `insert into public.proprietarios (
@@ -493,18 +552,18 @@ export async function POST(request: Request) {
           [
             user.tenant_id,
             user.id,
-            nome,
-            telefone.value,
-            documento.value,
-            cpf.value,
-            rg.value,
-            dataNascimento,
-            dataNascimento ? calculateAge(dataNascimento) : null,
-            profissao.value,
-            enderecoCompleto.value,
-            numeroSocio.value,
-            dataInicio,
-            dataFim,
+            fields.nome,
+            fields.telefone_whatsapp,
+            fields.documento,
+            fields.cpf,
+            fields.rg,
+            fields.data_nascimento,
+            fields.idade,
+            fields.profissao,
+            fields.endereco_completo,
+            fields.numero_socio_abccmm,
+            fields.data_inicio,
+            fields.data_fim,
           ],
         );
         return Response.json({ client: result.rows[0] }, { status: 201 });
@@ -517,53 +576,11 @@ export async function POST(request: Request) {
         if (!isUuid(body.id)) {
           return errorResponse("Cliente inválido.", 400);
         }
-        const missingField = getMissingClientField(body);
-        if (missingField) {
-          return errorResponse(`${missingField} - Preenchimento Obrigatório.`, 400);
+        const validation = validateClientFields(body);
+        if (!validation.valid) {
+          return errorResponse(validation.message, 400);
         }
-        const nome = sanitizeText(body.nome, 120);
-        const telefone = parseOptionalText(body.telefone_whatsapp, 20);
-        const documento = parseOptionalText(body.documento, 40);
-        const cpf = parseOptionalText(body.cpf, 20);
-        const rg = parseOptionalText(body.rg, 30);
-        const profissao = parseOptionalText(body.profissao, 120);
-        const enderecoCompleto = parseOptionalText(body.endereco_completo, 400);
-        const numeroSocio = parseOptionalDecimal(body.numero_socio_abccmm);
-        if (!nome) {
-          return errorResponse("Informe um nome válido para o cliente.", 400);
-        }
-        if (
-          !telefone.valid ||
-          !documento.valid ||
-          !cpf.valid ||
-          !rg.valid ||
-          !profissao.valid ||
-          !enderecoCompleto.valid
-        ) {
-          return errorResponse("Confira o tamanho e o formato dos dados informados.", 400);
-        }
-        if (cpf.value && cpf.value.replace(/\D/g, "").length !== 11) {
-          return errorResponse("CPF deve conter 11 dígitos.", 400);
-        }
-        const dataNascimento = parseOptionalDate(body.data_nascimento);
-        const dataInicio = parseOptionalDate(body.data_inicio);
-        const dataFim = parseOptionalDate(body.data_fim);
-        if (dataNascimento === undefined) {
-          return errorResponse("Data de nascimento inválida.", 400);
-        }
-        if (dataInicio === undefined || dataFim === undefined) {
-          return errorResponse("Data de início ou fim inválida.", 400);
-        }
-        if (dataInicio && dataFim && dataFim < dataInicio) {
-          return errorResponse("A data fim não pode ser anterior à data de início.", 400);
-        }
-        if (
-          !numeroSocio.valid ||
-          (numeroSocio.value !== null &&
-            (numeroSocio.value < 0 || numeroSocio.value > 999999.99999))
-        ) {
-          return errorResponse("Número do sócio ABCCMM inválido.", 400);
-        }
+        const fields = validation.fields;
 
         const result = await pool.query(
           `update public.proprietarios
@@ -578,18 +595,18 @@ export async function POST(request: Request) {
              endereco_completo, numero_socio_abccmm,
              data_inicio::text as data_inicio, data_fim::text as data_fim`,
           [
-            nome,
-            telefone.value,
-            documento.value,
-            cpf.value,
-            rg.value,
-            dataNascimento,
-            dataNascimento ? calculateAge(dataNascimento) : null,
-            profissao.value,
-            enderecoCompleto.value,
-            numeroSocio.value,
-            dataInicio,
-            dataFim,
+            fields.nome,
+            fields.telefone_whatsapp,
+            fields.documento,
+            fields.cpf,
+            fields.rg,
+            fields.data_nascimento,
+            fields.idade,
+            fields.profissao,
+            fields.endereco_completo,
+            fields.numero_socio_abccmm,
+            fields.data_inicio,
+            fields.data_fim,
             body.id,
             user.tenant_id,
             user.perfil === "OPERACIONAL" ? user.id : null,
@@ -730,6 +747,122 @@ export async function POST(request: Request) {
         );
         if (!result.rowCount) {
           return errorResponse("Cliente não encontrado.", 404);
+        }
+        return Response.json({ deleted: true });
+      }
+
+      case "createCteHarasRegistration": {
+        if (user.perfil !== "ADMIN" || !hasTenant) {
+          return errorResponse("Somente usuários ADMIN podem acessar este cadastro.", 403);
+        }
+        if (!isRegistrationType(body.tipo_cadastro)) {
+          return errorResponse("Tipo do cadastro deve ser CTE ou Haras.", 400);
+        }
+        const validation = validateClientFields(body);
+        if (!validation.valid) {
+          return errorResponse(validation.message, 400);
+        }
+        const fields = validation.fields;
+        const result = await pool.query(
+          `insert into public.cadastros_cte_haras (
+             tenant_id, criado_por, tipo_cadastro, nome, telefone_whatsapp,
+             documento, cpf, rg, data_nascimento, idade, profissao,
+             endereco_completo, numero_socio_abccmm, data_inicio, data_fim
+           )
+           values (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11,
+             $12, $13, $14::date, $15::date
+           )
+           returning id, tipo_cadastro, nome, telefone_whatsapp, documento, cpf, rg,
+             data_nascimento::text as data_nascimento, idade, profissao,
+             endereco_completo, numero_socio_abccmm,
+             data_inicio::text as data_inicio, data_fim::text as data_fim`,
+          [
+            user.tenant_id,
+            user.id,
+            body.tipo_cadastro,
+            fields.nome,
+            fields.telefone_whatsapp,
+            fields.documento,
+            fields.cpf,
+            fields.rg,
+            fields.data_nascimento,
+            fields.idade,
+            fields.profissao,
+            fields.endereco_completo,
+            fields.numero_socio_abccmm,
+            fields.data_inicio,
+            fields.data_fim,
+          ],
+        );
+        return Response.json({ registration: result.rows[0] }, { status: 201 });
+      }
+
+      case "updateCteHarasRegistration": {
+        if (user.perfil !== "ADMIN" || !hasTenant) {
+          return errorResponse("Somente usuários ADMIN podem acessar este cadastro.", 403);
+        }
+        if (!isUuid(body.id)) {
+          return errorResponse("Cadastro inválido.", 400);
+        }
+        if (!isRegistrationType(body.tipo_cadastro)) {
+          return errorResponse("Tipo do cadastro deve ser CTE ou Haras.", 400);
+        }
+        const validation = validateClientFields(body);
+        if (!validation.valid) {
+          return errorResponse(validation.message, 400);
+        }
+        const fields = validation.fields;
+        const result = await pool.query(
+          `update public.cadastros_cte_haras
+           set tipo_cadastro = $1, nome = $2, telefone_whatsapp = $3,
+               documento = $4, cpf = $5, rg = $6, data_nascimento = $7::date,
+               idade = $8, profissao = $9, endereco_completo = $10,
+               numero_socio_abccmm = $11, data_inicio = $12::date, data_fim = $13::date
+           where id = $14 and tenant_id = $15
+           returning id, tipo_cadastro, nome, telefone_whatsapp, documento, cpf, rg,
+             data_nascimento::text as data_nascimento, idade, profissao,
+             endereco_completo, numero_socio_abccmm,
+             data_inicio::text as data_inicio, data_fim::text as data_fim`,
+          [
+            body.tipo_cadastro,
+            fields.nome,
+            fields.telefone_whatsapp,
+            fields.documento,
+            fields.cpf,
+            fields.rg,
+            fields.data_nascimento,
+            fields.idade,
+            fields.profissao,
+            fields.endereco_completo,
+            fields.numero_socio_abccmm,
+            fields.data_inicio,
+            fields.data_fim,
+            body.id,
+            user.tenant_id,
+          ],
+        );
+        if (!result.rowCount) {
+          return errorResponse("Cadastro não encontrado para edição.", 404);
+        }
+        return Response.json({ registration: result.rows[0] });
+      }
+
+      case "deleteCteHarasRegistration": {
+        if (user.perfil !== "ADMIN" || !hasTenant) {
+          return errorResponse("Somente usuários ADMIN podem acessar este cadastro.", 403);
+        }
+        if (!isUuid(body.id)) {
+          return errorResponse("Cadastro inválido.", 400);
+        }
+        const result = await pool.query(
+          `delete from public.cadastros_cte_haras
+           where id = $1 and tenant_id = $2
+           returning id`,
+          [body.id, user.tenant_id],
+        );
+        if (!result.rowCount) {
+          return errorResponse("Cadastro não encontrado.", 404);
         }
         return Response.json({ deleted: true });
       }
