@@ -61,7 +61,8 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
    npm run dev
    ```
 
-   Acesse `http://localhost:3000`.
+   Acesse `http://localhost:3000`; a tela de login é sempre exibida ao abrir o
+   endereço principal. Após autenticar, o painel fica em `/dashboard`.
 
 ## Banco e armazenamento
 
@@ -85,8 +86,12 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   bcrypt. Não há cadastro público.
 - O banco só é acessado pelo servidor Next.js. Route Handlers validam sessão,
   perfil, plano e tenant e usam consultas parametrizadas.
-- O acesso operacional não inclui o financeiro; o plano CTE não habilita
-  reprodução.
+- O perfil OPERACIONAL pode consultar e alterar somente os clientes cadastrados
+  pelo próprio usuário, além de cadastrar novos clientes; não pode excluí-los.
+  O mesmo cliente pode ser cadastrado separadamente por outro OPERACIONAL.
+  Registros antigos sem autor identificado ficam visíveis somente ao ADMIN, que
+  pode consultar, cadastrar, alterar e excluir clientes. O acesso operacional
+  não inclui o financeiro; o plano CTE não habilita reprodução.
 - A conta inicial tem perfil `ADMIN`. `SUPER_ADMIN` é criado separadamente pelo
   seed. Para provisionar usuários `ADMIN` ou `OPERACIONAL`, defina
   `USER_NAME`, `USER_EMAIL`, `USER_PASSWORD`, `USER_TENANT_ID` e `USER_ROLE` em

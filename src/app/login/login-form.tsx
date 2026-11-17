@@ -32,7 +32,7 @@ export function LoginForm({ configured }: LoginFormProps) {
         return;
       }
 
-      router.replace("/");
+      router.replace("/dashboard");
       router.refresh();
     } catch (error) {
       console.error("Falha ao entrar:", error);

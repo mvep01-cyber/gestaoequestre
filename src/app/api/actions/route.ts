@@ -47,6 +47,70 @@ function sanitizeText(value: unknown, maxLength: number): string | null {
   return text;
 }
 
+function parseOptionalText(
+  value: unknown,
+  maxLength: number,
+): { value: string | null; valid: boolean } {
+  if (value === undefined || value === null) {
+    return { value: null, valid: true };
+  }
+  if (typeof value !== "string") {
+    return { value: null, valid: false };
+  }
+  const text = value.trim();
+  if (text.length > maxLength) {
+    return { value: null, valid: false };
+  }
+  return { value: text || null, valid: true };
+}
+
+function parseOptionalDate(value: unknown): string | null | undefined {
+  if (value === undefined || value === null || value === "") return null;
+  return isDateOnly(value) ? value : undefined;
+}
+
+function getMissingClientField(body: Record<string, unknown>): string | null {
+  const requiredTextFields: [string, string][] = [
+    ["nome", "Nome do cliente"],
+    ["telefone_whatsapp", "Telefone WhatsApp"],
+    ["documento", "Documento"],
+    ["cpf", "CPF"],
+    ["rg", "RG"],
+    ["data_nascimento", "Data de nascimento"],
+    ["profissao", "Profissão"],
+    ["endereco_completo", "Endereço completo"],
+  ];
+
+  for (const [field, label] of requiredTextFields) {
+    const value = body[field];
+    if (typeof value !== "string" || !value.trim()) {
+      return label;
+    }
+  }
+
+  const memberNumber = body.numero_socio_abccmm;
+  if (
+    memberNumber === undefined ||
+    memberNumber === null ||
+    memberNumber === "" ||
+    (typeof memberNumber === "string" && !memberNumber.trim())
+  ) {
+    return "Número de sócio ABCCMM";
+  }
+
+  const requiredDateFields: [string, string][] = [
+    ["data_inicio", "Data de início"],
+    ["data_fim", "Data de fim"],
+  ];
+  for (const [field, label] of requiredDateFields) {
+    const value = body[field];
+    if (typeof value !== "string" || !value.trim()) {
+      return label;
+    }
+  }
+  return null;
+}
+
 function parseDecimalField(value: unknown): number | null {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return null;
@@ -58,6 +122,16 @@ function parseDecimalField(value: unknown): number | null {
   const parsed = Number(trimmed.replace(",", "."));
   if (!Number.isFinite(parsed)) return null;
   return Number(parsed.toFixed(5));
+}
+
+function parseOptionalDecimal(
+  value: unknown,
+): { value: number | null; valid: boolean } {
+  if (value === undefined || value === null || value === "") {
+    return { value: null, valid: true };
+  }
+  const parsed = parseDecimalField(value);
+  return { value: parsed, valid: parsed !== null };
 }
 
 function calculateAge(dateOfBirth: string): number {
@@ -354,58 +428,81 @@ export async function POST(request: Request) {
       }
 
       case "createClient": {
-        if (!isManager || !hasTenant) {
-          return errorResponse("Ação permitida somente a gestores.", 403);
+        if ((user.perfil !== "ADMIN" && user.perfil !== "OPERACIONAL") || !hasTenant) {
+          return errorResponse("Ação permitida somente a usuários vinculados a um centro.", 403);
+        }
+        const missingField = getMissingClientField(body);
+        if (missingField) {
+          return errorResponse(`${missingField} - Preenchimento Obrigatório.`, 400);
         }
         const nome = sanitizeText(body.nome, 120);
-        const telefone = sanitizeText(body.telefone_whatsapp, 20);
-        const documento = sanitizeText(body.documento, 40);
-        const cpf = sanitizeText(body.cpf, 20);
-        const rg = sanitizeText(body.rg, 30);
-        const profissao = sanitizeText(body.profissao, 120);
-        const enderecoCompleto = sanitizeText(body.endereco_completo, 400);
-        const numeroSocio = parseDecimalField(body.numero_socio_abccmm);
-        if (!nome || !enderecoCompleto || !profissao || !cpf || !rg) {
-          return errorResponse("Preencha nome, endereço, profissão, CPF e RG.", 400);
+        const telefone = parseOptionalText(body.telefone_whatsapp, 20);
+        const documento = parseOptionalText(body.documento, 40);
+        const cpf = parseOptionalText(body.cpf, 20);
+        const rg = parseOptionalText(body.rg, 30);
+        const profissao = parseOptionalText(body.profissao, 120);
+        const enderecoCompleto = parseOptionalText(body.endereco_completo, 400);
+        const numeroSocio = parseOptionalDecimal(body.numero_socio_abccmm);
+        if (!nome) {
+          return errorResponse("Informe um nome válido para o cliente.", 400);
         }
-        const cpfDigits = cpf.replace(/\D/g, "");
-        if (cpfDigits.length !== 11) {
+        if (
+          !telefone.valid ||
+          !documento.valid ||
+          !cpf.valid ||
+          !rg.valid ||
+          !profissao.valid ||
+          !enderecoCompleto.valid
+        ) {
+          return errorResponse("Confira o tamanho e o formato dos dados informados.", 400);
+        }
+        if (cpf.value && cpf.value.replace(/\D/g, "").length !== 11) {
           return errorResponse("CPF deve conter 11 dígitos.", 400);
         }
-        if (!isDateOnly(body.data_nascimento)) {
+        const dataNascimento = parseOptionalDate(body.data_nascimento);
+        const dataInicio = parseOptionalDate(body.data_inicio);
+        const dataFim = parseOptionalDate(body.data_fim);
+        if (dataNascimento === undefined) {
           return errorResponse("Data de nascimento inválida.", 400);
         }
-        if (numeroSocio === null || numeroSocio < 0 || numeroSocio > 999999.99999) {
-          return errorResponse("Número do sócio ABCCMM inválido.", 400);
+        if (dataInicio === undefined || dataFim === undefined) {
+          return errorResponse("Data de início ou fim inválida.", 400);
         }
-        const dataInicio = body.data_inicio && isDateOnly(body.data_inicio) ? body.data_inicio : null;
-        const dataFim = body.data_fim && isDateOnly(body.data_fim) ? body.data_fim : null;
         if (dataInicio && dataFim && dataFim < dataInicio) {
           return errorResponse("A data fim não pode ser anterior à data de início.", 400);
+        }
+        if (
+          !numeroSocio.valid ||
+          (numeroSocio.value !== null &&
+            (numeroSocio.value < 0 || numeroSocio.value > 999999.99999))
+        ) {
+          return errorResponse("Número do sócio ABCCMM inválido.", 400);
         }
 
         const result = await pool.query(
           `insert into public.proprietarios (
-             tenant_id, nome, telefone_whatsapp, documento, cpf, rg,
+             tenant_id, criado_por, nome, telefone_whatsapp, documento, cpf, rg,
              data_nascimento, idade, profissao, endereco_completo,
              numero_socio_abccmm, data_inicio, data_fim
            )
-           values ($1, $2, $3, $4, $5, $6, $7::date, $8, $9, $10, $11, $12::date, $13::date)
+           values ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, $13::date, $14::date)
            returning id, nome, telefone_whatsapp, documento, cpf, rg,
-             data_nascimento, idade, profissao, endereco_completo,
-             numero_socio_abccmm, data_inicio, data_fim`,
+             data_nascimento::text as data_nascimento, idade, profissao,
+             endereco_completo, numero_socio_abccmm,
+             data_inicio::text as data_inicio, data_fim::text as data_fim`,
           [
             user.tenant_id,
+            user.id,
             nome,
-            telefone,
-            documento,
-            cpf,
-            rg,
-            body.data_nascimento,
-            calculateAge(body.data_nascimento as string),
-            profissao,
-            enderecoCompleto,
-            numeroSocio,
+            telefone.value,
+            documento.value,
+            cpf.value,
+            rg.value,
+            dataNascimento,
+            dataNascimento ? calculateAge(dataNascimento) : null,
+            profissao.value,
+            enderecoCompleto.value,
+            numeroSocio.value,
             dataInicio,
             dataFim,
           ],
@@ -414,36 +511,58 @@ export async function POST(request: Request) {
       }
 
       case "updateClient": {
-        if (!isManager || !hasTenant) {
-          return errorResponse("Ação permitida somente a gestores.", 403);
+        if ((user.perfil !== "ADMIN" && user.perfil !== "OPERACIONAL") || !hasTenant) {
+          return errorResponse("Ação permitida somente a usuários vinculados a um centro.", 403);
         }
         if (!isUuid(body.id)) {
           return errorResponse("Cliente inválido.", 400);
         }
-        const nome = sanitizeText(body.nome, 120);
-        const telefone = sanitizeText(body.telefone_whatsapp, 20);
-        const documento = sanitizeText(body.documento, 40);
-        const cpf = sanitizeText(body.cpf, 20);
-        const rg = sanitizeText(body.rg, 30);
-        const profissao = sanitizeText(body.profissao, 120);
-        const enderecoCompleto = sanitizeText(body.endereco_completo, 400);
-        const numeroSocio = parseDecimalField(body.numero_socio_abccmm);
-        if (!nome || !enderecoCompleto || !profissao || !cpf || !rg) {
-          return errorResponse("Preencha nome, endereço, profissão, CPF e RG.", 400);
+        const missingField = getMissingClientField(body);
+        if (missingField) {
+          return errorResponse(`${missingField} - Preenchimento Obrigatório.`, 400);
         }
-        if (cpf.replace(/\D/g, "").length !== 11) {
+        const nome = sanitizeText(body.nome, 120);
+        const telefone = parseOptionalText(body.telefone_whatsapp, 20);
+        const documento = parseOptionalText(body.documento, 40);
+        const cpf = parseOptionalText(body.cpf, 20);
+        const rg = parseOptionalText(body.rg, 30);
+        const profissao = parseOptionalText(body.profissao, 120);
+        const enderecoCompleto = parseOptionalText(body.endereco_completo, 400);
+        const numeroSocio = parseOptionalDecimal(body.numero_socio_abccmm);
+        if (!nome) {
+          return errorResponse("Informe um nome válido para o cliente.", 400);
+        }
+        if (
+          !telefone.valid ||
+          !documento.valid ||
+          !cpf.valid ||
+          !rg.valid ||
+          !profissao.valid ||
+          !enderecoCompleto.valid
+        ) {
+          return errorResponse("Confira o tamanho e o formato dos dados informados.", 400);
+        }
+        if (cpf.value && cpf.value.replace(/\D/g, "").length !== 11) {
           return errorResponse("CPF deve conter 11 dígitos.", 400);
         }
-        if (!isDateOnly(body.data_nascimento)) {
+        const dataNascimento = parseOptionalDate(body.data_nascimento);
+        const dataInicio = parseOptionalDate(body.data_inicio);
+        const dataFim = parseOptionalDate(body.data_fim);
+        if (dataNascimento === undefined) {
           return errorResponse("Data de nascimento inválida.", 400);
         }
-        if (numeroSocio === null || numeroSocio < 0 || numeroSocio > 999999.99999) {
-          return errorResponse("Número do sócio ABCCMM inválido.", 400);
+        if (dataInicio === undefined || dataFim === undefined) {
+          return errorResponse("Data de início ou fim inválida.", 400);
         }
-        const dataInicio = body.data_inicio && isDateOnly(body.data_inicio) ? body.data_inicio : null;
-        const dataFim = body.data_fim && isDateOnly(body.data_fim) ? body.data_fim : null;
         if (dataInicio && dataFim && dataFim < dataInicio) {
           return errorResponse("A data fim não pode ser anterior à data de início.", 400);
+        }
+        if (
+          !numeroSocio.valid ||
+          (numeroSocio.value !== null &&
+            (numeroSocio.value < 0 || numeroSocio.value > 999999.99999))
+        ) {
+          return errorResponse("Número do sócio ABCCMM inválido.", 400);
         }
 
         const result = await pool.query(
@@ -453,24 +572,27 @@ export async function POST(request: Request) {
                profissao = $8, endereco_completo = $9,
                numero_socio_abccmm = $10, data_inicio = $11::date, data_fim = $12::date
            where id = $13 and tenant_id = $14
+             and ($15::uuid is null or criado_por = $15)
            returning id, nome, telefone_whatsapp, documento, cpf, rg,
-             data_nascimento, idade, profissao, endereco_completo,
-             numero_socio_abccmm, data_inicio, data_fim`,
+             data_nascimento::text as data_nascimento, idade, profissao,
+             endereco_completo, numero_socio_abccmm,
+             data_inicio::text as data_inicio, data_fim::text as data_fim`,
           [
             nome,
-            telefone,
-            documento,
-            cpf,
-            rg,
-            body.data_nascimento,
-            calculateAge(body.data_nascimento as string),
-            profissao,
-            enderecoCompleto,
-            numeroSocio,
+            telefone.value,
+            documento.value,
+            cpf.value,
+            rg.value,
+            dataNascimento,
+            dataNascimento ? calculateAge(dataNascimento) : null,
+            profissao.value,
+            enderecoCompleto.value,
+            numeroSocio.value,
             dataInicio,
             dataFim,
             body.id,
             user.tenant_id,
+            user.perfil === "OPERACIONAL" ? user.id : null,
           ],
         );
         if (!result.rowCount) {
@@ -564,14 +686,15 @@ export async function POST(request: Request) {
 
         const result = await pool.query(
           `insert into public.proprietarios (
-             tenant_id, nome, telefone_whatsapp, documento, cpf, rg,
+             tenant_id, criado_por, nome, telefone_whatsapp, documento, cpf, rg,
              data_nascimento, idade, profissao, endereco_completo,
              numero_socio_abccmm, dia_vencimento_padrao, data_inicio, data_fim
            )
-           values ($1, $2, $3, $4, $5, $6, $7::date, $8, $9, $10, $11, $12, $13::date, $14::date)
+           values ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, $13, $14::date, $15::date)
            returning id`,
           [
             user.tenant_id,
+            user.id,
             nome,
             typeof body.telefone_whatsapp === "string" ? body.telefone_whatsapp.trim() || null : null,
             documento,

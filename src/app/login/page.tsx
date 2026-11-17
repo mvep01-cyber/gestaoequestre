@@ -1,16 +1,10 @@
-import { redirect } from "next/navigation";
 import { LoginForm } from "./login-form";
-import { getSession } from "@/lib/auth";
 import { isDatabaseConfigured } from "@/lib/db";
 
 export const instant = false;
 
 export default async function LoginPage() {
   const configured = isDatabaseConfigured();
-  const session = configured ? await getSession() : null;
-  if (session?.user) {
-    redirect("/");
-  }
 
   return (
     <main className="login-page">

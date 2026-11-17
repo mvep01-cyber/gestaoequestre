@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Campo Vivo | Gestão Equestre",
     short_name: "Campo Vivo",
     description: "Gestão simples para centros de treinamento e haras.",
-    start_url: "/",
+    start_url: "/login",
     display: "standalone",
     background_color: "#f5f2e9",
     theme_color: "#174b3a",

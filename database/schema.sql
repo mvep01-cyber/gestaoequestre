@@ -49,6 +49,7 @@ create unique index if not exists usuarios_email_lower_unique
 create table if not exists public.proprietarios (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants (id) on delete cascade,
+  criado_por uuid references public.usuarios (id) on delete set null,
   nome text not null,
   telefone_whatsapp text,
   documento text,
@@ -57,6 +58,7 @@ create table if not exists public.proprietarios (
 );
 
 alter table if exists public.proprietarios
+  add column if not exists criado_por uuid references public.usuarios (id) on delete set null,
   add column if not exists cpf text,
   add column if not exists rg text,
   add column if not exists data_nascimento date,
@@ -66,6 +68,9 @@ alter table if exists public.proprietarios
   add column if not exists numero_socio_abccmm numeric(12, 5),
   add column if not exists data_inicio date,
   add column if not exists data_fim date;
+
+create index if not exists proprietarios_tenant_creator_idx
+  on public.proprietarios (tenant_id, criado_por);
 
 create table if not exists public.equinos (
   id uuid primary key default gen_random_uuid(),
