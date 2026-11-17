@@ -38,6 +38,16 @@ type BillingOwner = {
   id: string;
   nome: string;
   telefone_whatsapp: string | null;
+  documento: string | null;
+  cpf: string | null;
+  rg: string | null;
+  data_nascimento: string | null;
+  idade: number | null;
+  profissao: string | null;
+  endereco_completo: string | null;
+  numero_socio_abccmm: number | null;
+  data_inicio: string | null;
+  data_fim: string | null;
 };
 
 type PixAccount = {
@@ -284,7 +294,9 @@ export default async function Home() {
     ),
     isManager
       ? pool.query<BillingOwner>(
-          `select id, nome, telefone_whatsapp
+          `select id, nome, telefone_whatsapp, documento, cpf, rg,
+                  data_nascimento, idade, profissao, endereco_completo,
+                  numero_socio_abccmm, data_inicio, data_fim
            from public.proprietarios
            where tenant_id = $1
            order by nome`,

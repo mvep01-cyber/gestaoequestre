@@ -56,6 +56,17 @@ create table if not exists public.proprietarios (
   unique (id, tenant_id)
 );
 
+alter table if exists public.proprietarios
+  add column if not exists cpf text,
+  add column if not exists rg text,
+  add column if not exists data_nascimento date,
+  add column if not exists idade integer,
+  add column if not exists profissao text,
+  add column if not exists endereco_completo text,
+  add column if not exists numero_socio_abccmm numeric(12, 5),
+  add column if not exists data_inicio date,
+  add column if not exists data_fim date;
+
 create table if not exists public.equinos (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants (id) on delete cascade,

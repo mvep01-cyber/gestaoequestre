@@ -64,6 +64,16 @@ type BillingOwner = {
   id: string;
   nome: string;
   telefone_whatsapp: string | null;
+  documento?: string | null;
+  cpf?: string | null;
+  rg?: string | null;
+  data_nascimento?: string | null;
+  idade?: number | null;
+  profissao?: string | null;
+  endereco_completo?: string | null;
+  numero_socio_abccmm?: number | null;
+  data_inicio?: string | null;
+  data_fim?: string | null;
 };
 
 type PixAccount = {
@@ -105,12 +115,29 @@ type ReproductionCycle = {
   nome_matriz: string;
 };
 
+type ClientRecord = {
+  id: string;
+  nome: string;
+  telefone_whatsapp: string | null;
+  documento: string | null;
+  cpf: string | null;
+  rg: string | null;
+  data_nascimento: string | null;
+  idade: number | null;
+  profissao: string | null;
+  endereco_completo: string | null;
+  numero_socio_abccmm: number | null;
+  data_inicio: string | null;
+  data_fim: string | null;
+};
+
 type DashboardProps = {
   demo: boolean;
   role: string;
   plan: string;
   tenantName: string;
   horses: HorseRecord[];
+  clients?: ClientRecord[];
   medicationApplications?: MedicationApplication[];
   todayTrainings?: TrainingSession[];
   pendingMedicationCount?: number;
@@ -124,7 +151,58 @@ type DashboardProps = {
   reproductionCycles?: ReproductionCycle[];
 };
 
-type Section = "home" | "horses" | "health" | "schedule" | "breeding" | "finance" | "admin";
+type ClientFormState = {
+  id: string;
+  nome: string;
+  telefone_whatsapp: string;
+  documento: string;
+  cpf: string;
+  rg: string;
+  data_nascimento: string;
+  idade: string;
+  profissao: string;
+  endereco_completo: string;
+  numero_socio_abccmm: string;
+  data_inicio: string;
+  data_fim: string;
+};
+
+const clientFormDefaults: ClientFormState = {
+  id: "",
+  nome: "",
+  telefone_whatsapp: "",
+  documento: "",
+  cpf: "",
+  rg: "",
+  data_nascimento: "",
+  idade: "",
+  profissao: "",
+  endereco_completo: "",
+  numero_socio_abccmm: "",
+  data_inicio: "",
+  data_fim: "",
+};
+
+function clientToForm(client: ClientRecord): ClientFormState {
+  return {
+    id: client.id,
+    nome: client.nome,
+    telefone_whatsapp: client.telefone_whatsapp ?? "",
+    documento: client.documento ?? "",
+    cpf: client.cpf ?? "",
+    rg: client.rg ?? "",
+    data_nascimento: client.data_nascimento ?? "",
+    idade: client.idade == null ? "" : String(client.idade),
+    profissao: client.profissao ?? "",
+    endereco_completo: client.endereco_completo ?? "",
+    numero_socio_abccmm:
+      client.numero_socio_abccmm == null ? "" : String(client.numero_socio_abccmm),
+    data_inicio: client.data_inicio ?? "",
+    data_fim: client.data_fim ?? "",
+  };
+}
+
+type Section = "home" | "horses" | "health" | "schedule" | "breeding" | "finance" | "admin" | "clients";
 
 const demoApplications: MedicationApplication[] = [
   {
@@ -176,7 +254,8 @@ const navItems: {
   { id: "schedule", label: "Agenda", icon: CalendarDays },
   { id: "breeding", label: "Reprodução", icon: Dna },
   { id: "finance", label: "Financeiro", icon: Wallet },
-  { id: "admin", label: "Clientes", icon: Building2 },
+  { id: "clients", label: "Clientes", icon: Building2 },
+  { id: "admin", label: "Plataforma", icon: ShieldCheck },
 ];
 
 const sectionTitles: Record<Section, { title: string; subtitle: string }> = {
@@ -204,8 +283,12 @@ const sectionTitles: Record<Section, { title: string; subtitle: string }> = {
     title: "Financeiro",
     subtitle: "Acompanhe cobranças e despesas do seu centro.",
   },
-  admin: {
+  clients: {
     title: "Clientes",
+    subtitle: "Cadastre, consulte e mantenha os dados dos clientes do centro.",
+  },
+  admin: {
+    title: "Plataforma",
     subtitle: "Gerencie os centros atendidos pela plataforma.",
   },
 };
@@ -275,6 +358,29 @@ function isReproductionCycle(value: unknown): value is ReproductionCycle {
   );
 }
 
+function isClientRecord(value: unknown): value is ClientRecord {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.nome === "string" &&
+    (typeof value.telefone_whatsapp === "string" || value.telefone_whatsapp === null) &&
+    (typeof value.documento === "string" || value.documento === null) &&
+    (typeof value.cpf === "string" || value.cpf === null) &&
+    (typeof value.rg === "string" || value.rg === null) &&
+    (typeof value.data_nascimento === "string" || value.data_nascimento === null) &&
+    (typeof value.idade === "number" || value.idade === null) &&
+    (typeof value.profissao === "string" || value.profissao === null) &&
+    (typeof value.endereco_completo === "string" || value.endereco_completo === null) &&
+    (
+      typeof value.numero_socio_abccmm === "number" ||
+      typeof value.numero_socio_abccmm === "string" ||
+      value.numero_socio_abccmm === null
+    ) &&
+    (typeof value.data_inicio === "string" || value.data_inicio === null) &&
+    (typeof value.data_fim === "string" || value.data_fim === null)
+  );
+}
+
 async function postDashboardAction(
   action: string,
   fields: Record<string, unknown> = {},
@@ -328,6 +434,10 @@ function StatCard({
   );
 }
 
+function BadgeCheckIcon() {
+  return <ShieldCheck size={30} className="empty-check-icon" />;
+}
+
 export function Dashboard({
   demo,
   role,
@@ -345,6 +455,7 @@ export function Dashboard({
   pixAccounts = [],
   financeEntries: initialFinanceEntries = [],
   reproductionCycles: initialReproductionCycles = [],
+  clients: initialClients = [],
 }: DashboardProps) {
   const router = useRouter();
   const [activeSection, setActiveSection] = useState<Section>(
@@ -360,6 +471,7 @@ export function Dashboard({
   const [tenants, setTenants] = useState(managedTenants);
   const [financeEntries, setFinanceEntries] = useState(initialFinanceEntries);
   const [reproductionCycles, setReproductionCycles] = useState(initialReproductionCycles);
+  const [clients, setClients] = useState(initialClients);
   const [selectedAccounts, setSelectedAccounts] = useState<Record<string, string>>({});
   const [horseCategory, setHorseCategory] = useState("");
   const [selectedOwnerId, setSelectedOwnerId] = useState("");
@@ -378,20 +490,24 @@ export function Dashboard({
   const [cycleRecipientId, setCycleRecipientId] = useState("");
   const [cycleDate, setCycleDate] = useState("");
   const [cycleDueDate, setCycleDueDate] = useState("");
+  const [showClientForm, setShowClientForm] = useState(false);
+  const [clientForm, setClientForm] = useState<ClientFormState>(clientFormDefaults);
   const isOperational = role === "OPERACIONAL";
   const isHaras = plan === "HARAS";
   const isSuperAdmin = role === "SUPER_ADMIN";
+  const isAdmin = role === "ADMIN";
 
   const visibleNav = useMemo(
     () =>
       navItems.filter((item) => {
         if (isSuperAdmin) return item.id === "admin";
+        if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || item.id === "finance" || item.id === "clients";
         if (item.id === "breeding") return isHaras && !isOperational;
         if (item.id === "finance") return !isOperational;
         if (item.id === "admin") return isSuperAdmin;
         return true;
       }),
-    [isHaras, isOperational, isSuperAdmin],
+    [isAdmin, isHaras, isOperational, isSuperAdmin],
   );
 
   const filteredHorses = useMemo(() => {
@@ -407,6 +523,23 @@ export function Dashboard({
       return matchesCategory && matchesSearch;
     });
   }, [horseCategory, horses, search]);
+
+  const filteredClients = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return clients.filter((client) => {
+      if (!query) return true;
+      const haystack = [
+        client.nome,
+        client.telefone_whatsapp ?? "",
+        client.cpf ?? "",
+        client.rg ?? "",
+        client.documento ?? "",
+        client.profissao ?? "",
+        client.endereco_completo ?? "",
+      ].join(" ").toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [clients, search]);
 
   const title = sectionTitles[activeSection];
   const pendingCount = demo ? applications.length : pendingMedicationCount;
@@ -745,6 +878,123 @@ export function Dashboard({
     } catch (error) {
       console.error("Falha ao atualizar ciclo:", error);
       setFeedback("Não foi possível atualizar o ciclo.");
+    }
+  }
+
+  async function handleCreateClient(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFeedback("");
+    setIsSaving(true);
+
+    const newClient: ClientRecord = {
+      id: `demo-client-${clients.length + 1}`,
+      nome: clientForm.nome.trim(),
+      telefone_whatsapp: clientForm.telefone_whatsapp.trim() || null,
+      documento: clientForm.documento.trim() || null,
+      cpf: clientForm.cpf?.trim() || null,
+      rg: clientForm.rg?.trim() || null,
+      data_nascimento: clientForm.data_nascimento?.trim() || null,
+      idade: clientForm.idade ? Number(clientForm.idade) : null,
+      profissao: clientForm.profissao?.trim() || null,
+      endereco_completo: clientForm.endereco_completo?.trim() || null,
+      numero_socio_abccmm: clientForm.numero_socio_abccmm ? Number(clientForm.numero_socio_abccmm) : null,
+      data_inicio: clientForm.data_inicio?.trim() || null,
+      data_fim: clientForm.data_fim?.trim() || null,
+    };
+
+    try {
+      if (demo) {
+        setClients((current) => [...current, newClient]);
+      } else {
+        const result = await postDashboardAction("createClient", newClient);
+        const client = isRecord(result) ? result.client : null;
+        if (!isClientRecord(client)) {
+          throw new Error("O servidor não retornou o cliente cadastrado.");
+        }
+        setClients((current) => [...current, client]);
+      }
+
+      setClientForm(clientFormDefaults);
+      setShowClientForm(false);
+      setFeedback("Cliente cadastrado.");
+      router.refresh();
+    } catch (error) {
+      console.error("Falha ao cadastrar cliente:", error);
+      setFeedback(
+        error instanceof Error ? error.message : "Não foi possível cadastrar o cliente.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleUpdateClient(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFeedback("");
+    setIsSaving(true);
+
+    const updatedClient: ClientRecord = {
+      ...clientForm,
+      idade: clientForm.idade ? Number(clientForm.idade) : null,
+      numero_socio_abccmm: clientForm.numero_socio_abccmm ? Number(clientForm.numero_socio_abccmm) : null,
+    };
+
+    try {
+      if (demo) {
+        setClients((current) =>
+          current.map((client) => (client.id === updatedClient.id ? updatedClient : client)),
+        );
+      } else {
+        const result = await postDashboardAction("updateClient", updatedClient);
+        const client = isRecord(result) ? result.client : null;
+        if (!isClientRecord(client)) {
+          throw new Error("O servidor não retornou o cliente atualizado.");
+        }
+        setClients((current) =>
+          current.map((currentClient) =>
+            currentClient.id === updatedClient.id
+              ? {
+                  ...client,
+                  numero_socio_abccmm:
+                    typeof client.numero_socio_abccmm === "string"
+                      ? Number(client.numero_socio_abccmm)
+                      : client.numero_socio_abccmm,
+                }
+              : currentClient,
+          ),
+        );
+      }
+
+      setClientForm(clientFormDefaults);
+      setShowClientForm(false);
+      setFeedback("Cliente atualizado.");
+      router.refresh();
+    } catch (error) {
+      console.error("Falha ao atualizar cliente:", error);
+      setFeedback(
+        error instanceof Error ? error.message : "Não foi possível atualizar o cliente.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleDeleteClient(clientId: string) {
+    if (demo) {
+      setClients((current) => current.filter((client) => client.id !== clientId));
+      return;
+    }
+
+    try {
+      await postDashboardAction("deleteClient", { id: clientId });
+      setClients((current) => current.filter((client) => client.id !== clientId));
+      setFeedback("Cliente excluído.");
+      router.refresh();
+    } catch (error) {
+      console.error("Falha ao excluir cliente:", error);
+      setFeedback(
+        error instanceof Error ? error.message : "Não foi possível excluir o cliente.",
+      );
     }
   }
 
@@ -1383,6 +1633,191 @@ export function Dashboard({
     );
   }
 
+  function renderClients() {
+    return (
+      <>
+        <div className="list-toolbar">
+          <label className="search-box">
+            <Search size={20} />
+            <span className="sr-only">Buscar cliente</span>
+            <input
+              placeholder="Buscar por nome, documento ou telefone"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+          <button className="button button-primary" onClick={() => setShowClientForm(true)}>
+            <Plus size={20} /> Cadastrar cliente
+          </button>
+        </div>
+        {filteredClients.length === 0 ? (
+          <div className="panel empty-state">
+            <Building2 size={34} />
+            <h2>{search ? "Nenhum cliente encontrado" : "Ainda não há clientes cadastrados"}</h2>
+            <p>
+              {search
+                ? "Tente buscar usando outro nome, documento ou telefone."
+                : "Cadastre o primeiro cliente para começar a organizar a rotina."}
+            </p>
+          </div>
+        ) : (
+          <div className="client-grid">
+            {filteredClients.map((client) => (
+              <article className="client-card" key={client.id}>
+                <div className="client-avatar"><Building2 size={27} /></div>
+                <div className="client-card-main">
+                  <h2>{client.nome}</h2>
+                  <p>{client.telefone_whatsapp || "Telefone não informado"}</p>
+                  <div className="client-meta">
+                    <span>{client.documento || "Documento não informado"}</span>
+                    <span>{client.profissao || "Profissão não informada"}</span>
+                  </div>
+                </div>
+                <div className="client-actions">
+                  <button
+                    className="button button-secondary"
+                    onClick={() => {
+                    setClientForm(clientToForm(client));
+                      setShowClientForm(true);
+                    }}
+                  >
+                    Editar
+                  </button>
+                  <button
+                    className="button button-quiet"
+                    onClick={() => void handleDeleteClient(client.id)}
+                  >
+                    Excluir
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+        {showClientForm && (
+          <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowClientForm(false);
+          }}>
+            <section
+              className="modal-card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="client-form-title"
+            >
+              <div className="modal-heading">
+                <div>
+                  <span className="eyebrow">Novo cadastro</span>
+                  <h2 id="client-form-title">Cadastrar cliente</h2>
+                </div>
+                <button
+                  className="icon-button"
+                  aria-label="Fechar"
+                  onClick={() => setShowClientForm(false)}
+                >
+                  <X size={22} />
+                </button>
+              </div>
+              <form className="client-form" onSubmit={(event) => void (clientForm.id ? handleUpdateClient(event) : handleCreateClient(event))}>
+                <label htmlFor="client-name">Nome do cliente</label>
+                <input
+                  id="client-name"
+                  autoFocus
+                  required
+                  value={clientForm.nome}
+                  onChange={(event) => setClientForm({ ...clientForm, nome: event.target.value })}
+                  placeholder="Ex.: João da Silva"
+                />
+                <label htmlFor="client-phone">Telefone WhatsApp</label>
+                <input
+                  id="client-phone"
+                  value={clientForm.telefone_whatsapp}
+                  onChange={(event) => setClientForm({ ...clientForm, telefone_whatsapp: event.target.value })}
+                  placeholder="Ex.: (11) 91234-5678"
+                />
+                <label htmlFor="client-document">Documento</label>
+                <input
+                  id="client-document"
+                  value={clientForm.documento}
+                  onChange={(event) => setClientForm({ ...clientForm, documento: event.target.value })}
+                  placeholder="Ex.: 123.456.789-09"
+                />
+                <label htmlFor="client-cpf">CPF</label>
+                <input
+                  id="client-cpf"
+                  value={clientForm.cpf}
+                  onChange={(event) => setClientForm({ ...clientForm, cpf: event.target.value })}
+                  placeholder="Ex.: 123.456.789-09"
+                />
+                <label htmlFor="client-rg">RG</label>
+                <input
+                  id="client-rg"
+                  value={clientForm.rg}
+                  onChange={(event) => setClientForm({ ...clientForm, rg: event.target.value })}
+                  placeholder="Ex.: 12.345.678-9"
+                />
+                <label htmlFor="client-birthdate">Data de nascimento</label>
+                <input
+                  id="client-birthdate"
+                  type="date"
+                  value={clientForm.data_nascimento}
+                  onChange={(event) => setClientForm({ ...clientForm, data_nascimento: event.target.value })}
+                />
+                <label htmlFor="client-profession">Profissão</label>
+                <input
+                  id="client-profession"
+                  value={clientForm.profissao}
+                  onChange={(event) => setClientForm({ ...clientForm, profissao: event.target.value })}
+                  placeholder="Ex.: Agricultor"
+                />
+                <label htmlFor="client-address">Endereço completo</label>
+                <input
+                  id="client-address"
+                  value={clientForm.endereco_completo}
+                  onChange={(event) => setClientForm({ ...clientForm, endereco_completo: event.target.value })}
+                  placeholder="Ex.: Rua das Flores, 123"
+                />
+                <label htmlFor="client-member-number">Número de sócio ABCCMM</label>
+                <input
+                  id="client-member-number"
+                  type="number"
+                  value={clientForm.numero_socio_abccmm ?? ""}
+                  onChange={(event) => setClientForm({ ...clientForm, numero_socio_abccmm: event.target.value })}
+                  placeholder="Ex.: 1234"
+                />
+                <label htmlFor="client-start-date">Data de início</label>
+                <input
+                  id="client-start-date"
+                  type="date"
+                  value={clientForm.data_inicio}
+                  onChange={(event) => setClientForm({ ...clientForm, data_inicio: event.target.value })}
+                />
+                <label htmlFor="client-end-date">Data de fim</label>
+                <input
+                  id="client-end-date"
+                  type="date"
+                  value={clientForm.data_fim}
+                  onChange={(event) => setClientForm({ ...clientForm, data_fim: event.target.value })}
+                />
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="button button-quiet"
+                    onClick={() => setShowClientForm(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button className="button button-primary" disabled={isSaving}>
+                    <Plus size={19} /> {isSaving ? "Salvando..." : "Salvar cliente"}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )}
+      </>
+    );
+  }
+
   function renderSection() {
     switch (activeSection) {
       case "horses":
@@ -1397,6 +1832,8 @@ export function Dashboard({
         return renderFinance();
       case "admin":
         return renderAdmin();
+      case "clients":
+        return renderClients();
       default:
         return renderHome();
     }
@@ -1587,11 +2024,127 @@ export function Dashboard({
           </section>
         </div>
       )}
+
+      {showClientForm && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setShowClientForm(false);
+        }}>
+          <section
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="client-form-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">Novo cadastro</span>
+                <h2 id="client-form-title">Cadastrar cliente</h2>
+              </div>
+              <button
+                className="icon-button"
+                aria-label="Fechar"
+                onClick={() => setShowClientForm(false)}
+              >
+                <X size={22} />
+              </button>
+            </div>
+            <form className="client-form" onSubmit={(event) => void (clientForm.id ? handleUpdateClient(event) : handleCreateClient(event))}>
+              <label htmlFor="client-name">Nome do cliente</label>
+              <input
+                id="client-name"
+                autoFocus
+                required
+                value={clientForm.nome}
+                onChange={(event) => setClientForm({ ...clientForm, nome: event.target.value })}
+                placeholder="Ex.: João da Silva"
+              />
+              <label htmlFor="client-phone">Telefone WhatsApp</label>
+              <input
+                id="client-phone"
+                value={clientForm.telefone_whatsapp}
+                onChange={(event) => setClientForm({ ...clientForm, telefone_whatsapp: event.target.value })}
+                placeholder="Ex.: (11) 91234-5678"
+              />
+              <label htmlFor="client-document">Documento</label>
+              <input
+                id="client-document"
+                value={clientForm.documento}
+                onChange={(event) => setClientForm({ ...clientForm, documento: event.target.value })}
+                placeholder="Ex.: 123.456.789-09"
+              />
+              <label htmlFor="client-cpf">CPF</label>
+              <input
+                id="client-cpf"
+                value={clientForm.cpf}
+                onChange={(event) => setClientForm({ ...clientForm, cpf: event.target.value })}
+                placeholder="Ex.: 123.456.789-09"
+              />
+              <label htmlFor="client-rg">RG</label>
+              <input
+                id="client-rg"
+                value={clientForm.rg}
+                onChange={(event) => setClientForm({ ...clientForm, rg: event.target.value })}
+                placeholder="Ex.: 12.345.678-9"
+              />
+              <label htmlFor="client-birthdate">Data de nascimento</label>
+              <input
+                id="client-birthdate"
+                type="date"
+                value={clientForm.data_nascimento}
+                onChange={(event) => setClientForm({ ...clientForm, data_nascimento: event.target.value })}
+              />
+              <label htmlFor="client-profession">Profissão</label>
+              <input
+                id="client-profession"
+                value={clientForm.profissao}
+                onChange={(event) => setClientForm({ ...clientForm, profissao: event.target.value })}
+                placeholder="Ex.: Agricultor"
+              />
+              <label htmlFor="client-address">Endereço completo</label>
+              <input
+                id="client-address"
+                value={clientForm.endereco_completo}
+                onChange={(event) => setClientForm({ ...clientForm, endereco_completo: event.target.value })}
+                placeholder="Ex.: Rua das Flores, 123"
+              />
+              <label htmlFor="client-member-number">Número de sócio ABCCMM</label>
+              <input
+                id="client-member-number"
+                type="number"
+                value={clientForm.numero_socio_abccmm ?? ""}
+                onChange={(event) => setClientForm({ ...clientForm, numero_socio_abccmm: event.target.value })}
+                placeholder="Ex.: 1234"
+              />
+              <label htmlFor="client-start-date">Data de início</label>
+              <input
+                id="client-start-date"
+                type="date"
+                value={clientForm.data_inicio}
+                onChange={(event) => setClientForm({ ...clientForm, data_inicio: event.target.value })}
+              />
+              <label htmlFor="client-end-date">Data de fim</label>
+              <input
+                id="client-end-date"
+                type="date"
+                value={clientForm.data_fim}
+                onChange={(event) => setClientForm({ ...clientForm, data_fim: event.target.value })}
+              />
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="button button-quiet"
+                  onClick={() => setShowClientForm(false)}
+                >
+                  Cancelar
+                </button>
+                <button className="button button-primary" disabled={isSaving}>
+                  <Plus size={19} /> {isSaving ? "Salvando..." : "Salvar cliente"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
-
-function BadgeCheckIcon() {
-  return <ShieldCheck size={30} className="empty-check-icon" />;
-}
-

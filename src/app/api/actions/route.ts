@@ -40,6 +40,38 @@ function errorResponse(message: string, status: number) {
   return Response.json({ error: message }, { status });
 }
 
+function sanitizeText(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text || text.length > maxLength) return null;
+  return text;
+}
+
+function parseDecimalField(value: unknown): number | null {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return Number(value.toFixed(5));
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed.replace(",", "."));
+  if (!Number.isFinite(parsed)) return null;
+  return Number(parsed.toFixed(5));
+}
+
+function calculateAge(dateOfBirth: string): number {
+  const birth = new Date(`${dateOfBirth}T00:00:00.000Z`);
+  const today = new Date();
+  let age = today.getUTCFullYear() - birth.getUTCFullYear();
+  const monthDiff = today.getUTCMonth() - birth.getUTCMonth();
+  const dayDiff = today.getUTCDate() - birth.getUTCDate();
+  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+    age -= 1;
+  }
+  return age;
+}
+
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) {
     return errorResponse("Origem da solicitação inválida.", 403);
@@ -319,6 +351,264 @@ export async function POST(request: Request) {
           return errorResponse("Ciclo não encontrado.", 404);
         }
         return Response.json({ updated: true });
+      }
+
+      case "createClient": {
+        if (!isManager || !hasTenant) {
+          return errorResponse("Ação permitida somente a gestores.", 403);
+        }
+        const nome = sanitizeText(body.nome, 120);
+        const telefone = sanitizeText(body.telefone_whatsapp, 20);
+        const documento = sanitizeText(body.documento, 40);
+        const cpf = sanitizeText(body.cpf, 20);
+        const rg = sanitizeText(body.rg, 30);
+        const profissao = sanitizeText(body.profissao, 120);
+        const enderecoCompleto = sanitizeText(body.endereco_completo, 400);
+        const numeroSocio = parseDecimalField(body.numero_socio_abccmm);
+        if (!nome || !enderecoCompleto || !profissao || !cpf || !rg) {
+          return errorResponse("Preencha nome, endereço, profissão, CPF e RG.", 400);
+        }
+        const cpfDigits = cpf.replace(/\D/g, "");
+        if (cpfDigits.length !== 11) {
+          return errorResponse("CPF deve conter 11 dígitos.", 400);
+        }
+        if (!isDateOnly(body.data_nascimento)) {
+          return errorResponse("Data de nascimento inválida.", 400);
+        }
+        if (numeroSocio === null || numeroSocio < 0 || numeroSocio > 999999.99999) {
+          return errorResponse("Número do sócio ABCCMM inválido.", 400);
+        }
+        const dataInicio = body.data_inicio && isDateOnly(body.data_inicio) ? body.data_inicio : null;
+        const dataFim = body.data_fim && isDateOnly(body.data_fim) ? body.data_fim : null;
+        if (dataInicio && dataFim && dataFim < dataInicio) {
+          return errorResponse("A data fim não pode ser anterior à data de início.", 400);
+        }
+
+        const result = await pool.query(
+          `insert into public.proprietarios (
+             tenant_id, nome, telefone_whatsapp, documento, cpf, rg,
+             data_nascimento, idade, profissao, endereco_completo,
+             numero_socio_abccmm, data_inicio, data_fim
+           )
+           values ($1, $2, $3, $4, $5, $6, $7::date, $8, $9, $10, $11, $12::date, $13::date)
+           returning id, nome, telefone_whatsapp, documento, cpf, rg,
+             data_nascimento, idade, profissao, endereco_completo,
+             numero_socio_abccmm, data_inicio, data_fim`,
+          [
+            user.tenant_id,
+            nome,
+            telefone,
+            documento,
+            cpf,
+            rg,
+            body.data_nascimento,
+            calculateAge(body.data_nascimento as string),
+            profissao,
+            enderecoCompleto,
+            numeroSocio,
+            dataInicio,
+            dataFim,
+          ],
+        );
+        return Response.json({ client: result.rows[0] }, { status: 201 });
+      }
+
+      case "updateClient": {
+        if (!isManager || !hasTenant) {
+          return errorResponse("Ação permitida somente a gestores.", 403);
+        }
+        if (!isUuid(body.id)) {
+          return errorResponse("Cliente inválido.", 400);
+        }
+        const nome = sanitizeText(body.nome, 120);
+        const telefone = sanitizeText(body.telefone_whatsapp, 20);
+        const documento = sanitizeText(body.documento, 40);
+        const cpf = sanitizeText(body.cpf, 20);
+        const rg = sanitizeText(body.rg, 30);
+        const profissao = sanitizeText(body.profissao, 120);
+        const enderecoCompleto = sanitizeText(body.endereco_completo, 400);
+        const numeroSocio = parseDecimalField(body.numero_socio_abccmm);
+        if (!nome || !enderecoCompleto || !profissao || !cpf || !rg) {
+          return errorResponse("Preencha nome, endereço, profissão, CPF e RG.", 400);
+        }
+        if (cpf.replace(/\D/g, "").length !== 11) {
+          return errorResponse("CPF deve conter 11 dígitos.", 400);
+        }
+        if (!isDateOnly(body.data_nascimento)) {
+          return errorResponse("Data de nascimento inválida.", 400);
+        }
+        if (numeroSocio === null || numeroSocio < 0 || numeroSocio > 999999.99999) {
+          return errorResponse("Número do sócio ABCCMM inválido.", 400);
+        }
+        const dataInicio = body.data_inicio && isDateOnly(body.data_inicio) ? body.data_inicio : null;
+        const dataFim = body.data_fim && isDateOnly(body.data_fim) ? body.data_fim : null;
+        if (dataInicio && dataFim && dataFim < dataInicio) {
+          return errorResponse("A data fim não pode ser anterior à data de início.", 400);
+        }
+
+        const result = await pool.query(
+          `update public.proprietarios
+           set nome = $1, telefone_whatsapp = $2, documento = $3, cpf = $4,
+               rg = $5, data_nascimento = $6::date, idade = $7,
+               profissao = $8, endereco_completo = $9,
+               numero_socio_abccmm = $10, data_inicio = $11::date, data_fim = $12::date
+           where id = $13 and tenant_id = $14
+           returning id, nome, telefone_whatsapp, documento, cpf, rg,
+             data_nascimento, idade, profissao, endereco_completo,
+             numero_socio_abccmm, data_inicio, data_fim`,
+          [
+            nome,
+            telefone,
+            documento,
+            cpf,
+            rg,
+            body.data_nascimento,
+            calculateAge(body.data_nascimento as string),
+            profissao,
+            enderecoCompleto,
+            numeroSocio,
+            dataInicio,
+            dataFim,
+            body.id,
+            user.tenant_id,
+          ],
+        );
+        if (!result.rowCount) {
+          return errorResponse("Cliente não encontrado para edição.", 404);
+        }
+        return Response.json({ client: result.rows[0] });
+      }
+
+      case "saveClient": {
+        if (!isManager || !hasTenant) {
+          return errorResponse("Somente administradores podem cadastrar clientes.", 403);
+        }
+
+        const nome = sanitizeText(body.nome, 120);
+        const enderecoCompleto = sanitizeText(body.endereco_completo, 400);
+        const profissao = sanitizeText(body.profissao, 120);
+        const cpf = sanitizeText(body.cpf, 20);
+        const rg = sanitizeText(body.rg, 30);
+        const documento = sanitizeText(body.documento, 40);
+
+        if (!nome || !enderecoCompleto || !profissao || !cpf || !rg) {
+          return errorResponse("Preencha nome, endereço, profissão, CPF e RG.", 400);
+        }
+
+        const cpfDigits = cpf.replace(/\D/g, "");
+        if (cpfDigits.length !== 11) {
+          return errorResponse("CPF deve conter 11 dígitos.", 400);
+        }
+
+        if (!isDateOnly(body.data_nascimento)) {
+          return errorResponse("Data de nascimento inválida.", 400);
+        }
+
+        const numeroSocio = parseDecimalField(body.numero_socio_abccmm);
+        if (numeroSocio === null || numeroSocio < 0 || numeroSocio > 999999.99999) {
+          return errorResponse("Número do sócio ABCCMM inválido.", 400);
+        }
+
+        const dataInicio = body.data_inicio && isDateOnly(body.data_inicio) ? body.data_inicio : null;
+        const dataFim = body.data_fim && isDateOnly(body.data_fim) ? body.data_fim : null;
+        if (dataInicio && dataFim && dataFim < dataInicio) {
+          return errorResponse("A data fim não pode ser anterior à data de início.", 400);
+        }
+
+        const idade = calculateAge(body.data_nascimento as string);
+        const safeId = typeof body.id === "string" && isUuid(body.id) ? body.id : null;
+
+        if (safeId) {
+          const result = await pool.query(
+            `update public.proprietarios
+             set nome = $1,
+                 telefone_whatsapp = $2,
+                 documento = $3,
+                 cpf = $4,
+                 rg = $5,
+                 data_nascimento = $6::date,
+                 idade = $7,
+                 profissao = $8,
+                 endereco_completo = $9,
+                 numero_socio_abccmm = $10,
+                 dia_vencimento_padrao = $11,
+                 data_inicio = $12::date,
+                 data_fim = $13::date
+             where id = $14 and tenant_id = $15
+             returning id`,
+            [
+              nome,
+              typeof body.telefone_whatsapp === "string" ? body.telefone_whatsapp.trim() || null : null,
+              documento,
+              cpf,
+              rg,
+              body.data_nascimento,
+              idade,
+              profissao,
+              enderecoCompleto,
+              numeroSocio,
+              typeof body.dia_vencimento_padrao === "number"
+                ? body.dia_vencimento_padrao
+                : null,
+              dataInicio,
+              dataFim,
+              safeId,
+              user.tenant_id,
+            ],
+          );
+          if (!result.rowCount) {
+            return errorResponse("Cliente não encontrado para edição.", 404);
+          }
+          return Response.json({ updated: true });
+        }
+
+        const result = await pool.query(
+          `insert into public.proprietarios (
+             tenant_id, nome, telefone_whatsapp, documento, cpf, rg,
+             data_nascimento, idade, profissao, endereco_completo,
+             numero_socio_abccmm, dia_vencimento_padrao, data_inicio, data_fim
+           )
+           values ($1, $2, $3, $4, $5, $6, $7::date, $8, $9, $10, $11, $12, $13::date, $14::date)
+           returning id`,
+          [
+            user.tenant_id,
+            nome,
+            typeof body.telefone_whatsapp === "string" ? body.telefone_whatsapp.trim() || null : null,
+            documento,
+            cpf,
+            rg,
+            body.data_nascimento,
+            idade,
+            profissao,
+            enderecoCompleto,
+            numeroSocio,
+            typeof body.dia_vencimento_padrao === "number"
+              ? body.dia_vencimento_padrao
+              : null,
+            dataInicio,
+            dataFim,
+          ],
+        );
+        return Response.json({ id: result.rows[0]?.id ?? null }, { status: 201 });
+      }
+
+      case "deleteClient": {
+        if (!isManager || !hasTenant) {
+          return errorResponse("Somente administradores podem remover clientes.", 403);
+        }
+        if (!isUuid(body.id)) {
+          return errorResponse("Cliente inválido.", 400);
+        }
+        const result = await pool.query(
+          `delete from public.proprietarios
+           where id = $1 and tenant_id = $2
+           returning id`,
+          [body.id, user.tenant_id],
+        );
+        if (!result.rowCount) {
+          return errorResponse("Cliente não encontrado.", 404);
+        }
+        return Response.json({ deleted: true });
       }
 
       default:
