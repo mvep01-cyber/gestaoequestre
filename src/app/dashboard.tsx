@@ -36,7 +36,34 @@ type HorseRecord = {
   raca: string[];
   categoria: string;
   status: string;
+  nome_pai: string | null;
+  nome_mae: string | null;
+  data_nascimento: string | null;
+  registro_associacao: string | null;
+  sexo: string;
+  pelagem: string | null;
+  foto_url?: string | null;
+  nome_proprietario?: string | null;
+  nome_treinador?: string | null;
+  chip_resenha?: string | null;
+  alimentacao_diaria?: string | null;
+  valor_mensalidade?: number;
+  created_at?: string | null;
 };
+
+const horseCoatTypes = [
+  "Branco",
+  "Preto",
+  "Alazão",
+  "Baio",
+  "Castanha",
+  "Tordilha",
+  "Rosilha",
+  "Pampa de Preto",
+  "Pampa de Marrom",
+  "Pampa de Castanho",
+  "Pampa de Alazão",
+] as const;
 
 type MedicationApplication = {
   id: string;
@@ -379,6 +406,12 @@ function getStatusLabel(status: string) {
   }
 }
 
+function getHorseSexLabel(sex: string) {
+  if (sex === "MACHO") return "Macho";
+  if (sex === "FEMEA") return "Fêmea";
+  return "Não informado";
+}
+
 function getTime(date: string) {
   return new Intl.DateTimeFormat("pt-BR", {
     hour: "2-digit",
@@ -413,7 +446,14 @@ function isHorseRecord(value: unknown): value is HorseRecord {
     Array.isArray(value.raca) &&
     value.raca.every((race) => typeof race === "string") &&
     typeof value.categoria === "string" &&
-    typeof value.status === "string"
+    typeof value.status === "string" &&
+    (typeof value.nome_pai === "string" || value.nome_pai === null) &&
+    (typeof value.nome_mae === "string" || value.nome_mae === null) &&
+    (typeof value.data_nascimento === "string" || value.data_nascimento === null) &&
+    (typeof value.registro_associacao === "string" ||
+      value.registro_associacao === null) &&
+    typeof value.sexo === "string" &&
+    (typeof value.pelagem === "string" || value.pelagem === null)
   );
 }
 
@@ -580,8 +620,24 @@ export function Dashboard({
   const [whatsappUrl, setWhatsappUrl] = useState("");
   const [search, setSearch] = useState("");
   const [showHorseForm, setShowHorseForm] = useState(false);
+  const [horseEditingId, setHorseEditingId] = useState<string | null>(null);
   const [horseName, setHorseName] = useState("");
   const [horseStable, setHorseStable] = useState("");
+  const [horseOwnerName, setHorseOwnerName] = useState("");
+  const [horseTrainerName, setHorseTrainerName] = useState("");
+  const [horseFather, setHorseFather] = useState("");
+  const [horseMother, setHorseMother] = useState("");
+  const [horseBirthDate, setHorseBirthDate] = useState("");
+  const [horseRegistration, setHorseRegistration] = useState("");
+  const [horseSex, setHorseSex] = useState("INDEFINIDO");
+  const [horseCoat, setHorseCoat] = useState("");
+  const [horsePhotoUrl, setHorsePhotoUrl] = useState("");
+  const [horseBreeds, setHorseBreeds] = useState("");
+  const [horseFormCategory, setHorseFormCategory] = useState("ATLETA");
+  const [horseStatus, setHorseStatus] = useState("DESCANSO");
+  const [horseChip, setHorseChip] = useState("");
+  const [horseFeeding, setHorseFeeding] = useState("");
+  const [horseMonthlyFee, setHorseMonthlyFee] = useState("0");
   const [feedback, setFeedback] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [showCycleForm, setShowCycleForm] = useState(false);
@@ -600,6 +656,7 @@ export function Dashboard({
   const isHaras = plan === "HARAS";
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isAdmin = role === "ADMIN";
+  const canManageHorses = isAdmin || isOperational;
 
   const visibleNav = useMemo(
     () =>
@@ -621,7 +678,18 @@ export function Dashboard({
       const matchesCategory = !horseCategory || horse.categoria === horseCategory;
       const matchesSearch =
         !query ||
-        [horse.nome, horse.baia ?? "", horse.categoria, ...horse.raca]
+        [
+          horse.nome,
+          horse.baia ?? "",
+          horse.categoria,
+          horse.nome_pai ?? "",
+          horse.nome_mae ?? "",
+          horse.registro_associacao ?? "",
+          horse.data_nascimento ?? "",
+          horse.sexo,
+          horse.pelagem ?? "",
+          ...horse.raca,
+        ]
           .join(" ")
           .toLocaleLowerCase("pt-BR")
           .includes(query);
@@ -686,47 +754,150 @@ export function Dashboard({
     }
   }
 
-  async function handleCreateHorse(event: FormEvent<HTMLFormElement>) {
+  function openHorseForm(horse?: HorseRecord) {
+    setFeedback("");
+    setHorseEditingId(horse?.id ?? null);
+    setHorseName(horse?.nome ?? "");
+    setHorseStable(horse?.baia ?? "");
+    setHorseOwnerName(horse?.nome_proprietario ?? "");
+    setHorseTrainerName(horse?.nome_treinador ?? "");
+    setHorseFather(horse?.nome_pai ?? "");
+    setHorseMother(horse?.nome_mae ?? "");
+    setHorseBirthDate(horse?.data_nascimento ?? "");
+    setHorseRegistration(horse?.registro_associacao ?? "");
+    setHorseSex(horse?.sexo ?? "INDEFINIDO");
+    setHorseCoat(horse?.pelagem ?? "");
+    setHorsePhotoUrl(horse?.foto_url ?? "");
+    setHorseBreeds(horse?.raca.join(", ") ?? "");
+    setHorseFormCategory(horse?.categoria ?? "ATLETA");
+    setHorseStatus(horse?.status ?? "DESCANSO");
+    setHorseChip(horse?.chip_resenha ?? "");
+    setHorseFeeding(horse?.alimentacao_diaria ?? "");
+    setHorseMonthlyFee(String(horse?.valor_mensalidade ?? 0));
+    setShowHorseForm(true);
+  }
+
+  function closeHorseForm() {
+    setShowHorseForm(false);
+    setHorseEditingId(null);
+  }
+
+  async function handleSaveHorse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback("");
     setIsSaving(true);
 
-    const newHorse: HorseRecord = {
-      id: `demo-${Date.now()}`,
+    const horseFields = {
       nome: horseName.trim(),
       baia: horseStable.trim() || null,
-      raca: [],
-      categoria: "ATLETA",
-      status: "DESCANSO",
+      nome_proprietario: horseOwnerName.trim() || null,
+      nome_treinador: horseTrainerName.trim() || null,
+      nome_pai: horseFather.trim() || null,
+      nome_mae: horseMother.trim() || null,
+      data_nascimento: horseBirthDate || null,
+      registro_associacao: horseRegistration.trim() || null,
+      sexo: horseSex,
+      pelagem: horseCoat || null,
+      foto_url: horsePhotoUrl.trim() || null,
+      raca: horseBreeds.split(",").map((breed) => breed.trim()).filter(Boolean),
+      categoria: horseFormCategory,
+      status: horseStatus,
+      chip_resenha: horseChip.trim() || null,
+      alimentacao_diaria: horseFeeding.trim() || null,
+      valor_mensalidade: horseMonthlyFee.trim() ? Number(horseMonthlyFee) : 0,
     };
+    const horseId = horseEditingId;
 
     try {
       if (demo) {
-        setHorses((current) => [...current, newHorse]);
+        if (horseId) {
+          setHorses((current) =>
+            current.map((horse) =>
+              horse.id === horseId ? { ...horse, ...horseFields } : horse,
+            ),
+          );
+        } else {
+          setHorses((current) => [
+            ...current,
+            {
+              id: `demo-${Date.now()}`,
+              ...horseFields,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        }
       } else {
-        const result = await postDashboardAction("createHorse", {
-          nome: newHorse.nome,
-          baia: newHorse.baia,
-        });
+        const result = await postDashboardAction(
+          horseId ? "updateHorse" : "createHorse",
+          { ...horseFields, ...(horseId ? { id: horseId } : {}) },
+        );
         const horse = isRecord(result) ? result.horse : null;
         if (!isHorseRecord(horse)) {
-          throw new Error("O servidor não retornou o cavalo cadastrado.");
+          throw new Error("O servidor não retornou o cavalo salvo.");
         }
-        setHorses((current) => [...current, horse]);
+        setHorses((current) =>
+          horseId
+            ? current.map((currentHorse) =>
+                currentHorse.id === horseId
+                  ? { ...currentHorse, ...horse }
+                  : currentHorse,
+              )
+            : [...current, horse],
+        );
       }
 
       setHorseName("");
       setHorseStable("");
+      setHorseOwnerName("");
+      setHorseTrainerName("");
+      setHorseFather("");
+      setHorseMother("");
+      setHorseBirthDate("");
+      setHorseRegistration("");
+      setHorseSex("INDEFINIDO");
+      setHorseCoat("");
+      setHorsePhotoUrl("");
+      setHorseBreeds("");
+      setHorseFormCategory("ATLETA");
+      setHorseStatus("DESCANSO");
+      setHorseChip("");
+      setHorseFeeding("");
+      setHorseMonthlyFee("0");
       setShowHorseForm(false);
-      setFeedback("Cavalo cadastrado.");
+      setHorseEditingId(null);
+      setFeedback(horseId ? "Animal atualizado." : "Cavalo cadastrado.");
       router.refresh();
     } catch (error) {
-      console.error("Falha ao cadastrar cavalo:", error);
+      console.error("Falha ao salvar cavalo:", error);
       setFeedback(
-        error instanceof Error ? error.message : "Não foi possível cadastrar o cavalo.",
+        error instanceof Error ? error.message : "Não foi possível salvar o cavalo.",
       );
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleDeleteHorse(horse: HorseRecord) {
+    if (
+      !window.confirm(
+        `Excluir ${horse.nome} do cadastro? O registro será mantido no histórico.`,
+      )
+    ) {
+      return;
+    }
+
+    try {
+      if (!demo) {
+        await postDashboardAction("deleteHorse", { id: horse.id });
+      }
+      setHorses((current) => current.filter((currentHorse) => currentHorse.id !== horse.id));
+      setFeedback("Animal excluído do cadastro.");
+      router.refresh();
+    } catch (error) {
+      console.error("Falha ao excluir cavalo:", error);
+      setFeedback(
+        error instanceof Error ? error.message : "Não foi possível excluir o cavalo.",
+      );
     }
   }
 
@@ -1383,13 +1554,13 @@ export function Dashboard({
             <Search size={20} />
             <span className="sr-only">Buscar cavalo</span>
             <input
-              placeholder="Buscar por nome, raça ou baia"
+              placeholder="Buscar por nome, pais, registro ou baia"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
           </label>
-          {!isOperational && (
-            <button className="button button-primary" onClick={() => setShowHorseForm(true)}>
+          {canManageHorses && (
+            <button className="button button-primary" onClick={() => openHorseForm()}>
               <Plus size={20} /> Cadastrar cavalo
             </button>
           )}
@@ -1405,23 +1576,83 @@ export function Dashboard({
             </p>
           </div>
         ) : (
-          <div className="horse-grid">
-            {filteredHorses.map((horse) => (
-              <article className="horse-card" key={horse.id}>
-                <div className="horse-avatar"><Activity size={27} /></div>
-                <div className="horse-card-main">
-                  <h2>{horse.nome}</h2>
-                  <p>{horse.raca?.join(", ") || "Raça não informada"}</p>
-                  <div className="horse-meta">
-                    <span>Baia {horse.baia || "—"}</span>
-                    <span>{horse.categoria}</span>
-                  </div>
-                </div>
-                <span className={`status-pill status-${horse.status.toLowerCase()}`}>
-                  {getStatusLabel(horse.status)}
-                </span>
-              </article>
-            ))}
+          <div className="horse-table-wrap">
+            <table className="horse-table" aria-label="Cadastro de cavalos">
+              <thead>
+                <tr>
+                  <th scope="col">Animal</th>
+                  <th scope="col">Proprietário</th>
+                  <th scope="col">Treinador</th>
+                  <th scope="col">Nome do pai</th>
+                  <th scope="col">Nome da mãe</th>
+                  <th scope="col">Nascimento</th>
+                  <th scope="col">Registro ABCCMM</th>
+                  <th scope="col">Sexo</th>
+                  <th scope="col">Pelagem</th>
+                  <th scope="col">Raça</th>
+                  <th scope="col">Baia</th>
+                  <th scope="col">Categoria</th>
+                  <th scope="col">Situação</th>
+                  <th scope="col">Chip/Resenha</th>
+                  <th scope="col">Alimentação diária</th>
+                  <th scope="col">Mensalidade</th>
+                  <th scope="col">Foto (URL)</th>
+                  <th scope="col">Cadastro</th>
+                  {canManageHorses && <th scope="col">Ações</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredHorses.map((horse) => (
+                  <tr key={horse.id}>
+                    <td>{horse.nome}</td>
+                    <td>{horse.nome_proprietario || "—"}</td>
+                    <td>{horse.nome_treinador || "—"}</td>
+                    <td>{horse.nome_pai || "—"}</td>
+                    <td>{horse.nome_mae || "—"}</td>
+                    <td>{formatClientDate(horse.data_nascimento)}</td>
+                    <td>{horse.registro_associacao || "—"}</td>
+                    <td>{getHorseSexLabel(horse.sexo)}</td>
+                    <td>{horse.pelagem || "—"}</td>
+                    <td>{horse.raca.join(", ") || "—"}</td>
+                    <td>{horse.baia || "—"}</td>
+                    <td>{horse.categoria}</td>
+                    <td>
+                      <span className={`status-pill status-${horse.status.toLowerCase()}`}>
+                        {getStatusLabel(horse.status)}
+                      </span>
+                    </td>
+                    <td>{horse.chip_resenha || "—"}</td>
+                    <td>{horse.alimentacao_diaria || "—"}</td>
+                    <td>
+                      {new Intl.NumberFormat("pt-BR", {
+                        style: "currency",
+                        currency: "BRL",
+                      }).format(horse.valor_mensalidade ?? 0)}
+                    </td>
+                    <td>{horse.foto_url || "—"}</td>
+                    <td>{formatClientDate(horse.created_at ?? null)}</td>
+                    {canManageHorses && (
+                      <td>
+                        <div className="client-row-actions">
+                          <button
+                            className="button button-secondary"
+                            onClick={() => openHorseForm(horse)}
+                          >
+                            Alterar
+                          </button>
+                          <button
+                            className="button button-quiet"
+                            onClick={() => void handleDeleteHorse(horse)}
+                          >
+                            Excluir
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </>
@@ -2248,7 +2479,7 @@ export function Dashboard({
 
       {showHorseForm && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setShowHorseForm(false);
+          if (event.target === event.currentTarget) closeHorseForm();
         }}>
           <section
             className="modal-card"
@@ -2258,27 +2489,136 @@ export function Dashboard({
           >
             <div className="modal-heading">
               <div>
-                <span className="eyebrow">Novo cadastro</span>
-                <h2 id="horse-form-title">Cadastrar cavalo</h2>
+                <span className="eyebrow">{horseEditingId ? "Editar cadastro" : "Novo cadastro"}</span>
+                <h2 id="horse-form-title">{horseEditingId ? "Alterar animal" : "Cadastrar cavalo"}</h2>
               </div>
               <button
                 className="icon-button"
                 aria-label="Fechar"
-                onClick={() => setShowHorseForm(false)}
+                onClick={closeHorseForm}
               >
                 <X size={22} />
               </button>
             </div>
-            <form className="horse-form" onSubmit={(event) => void handleCreateHorse(event)}>
-              <label htmlFor="horse-name">Nome do cavalo</label>
+            <form className="horse-form" onSubmit={(event) => void handleSaveHorse(event)}>
+              <label htmlFor="horse-name">Nome do animal</label>
               <input
                 id="horse-name"
                 autoFocus
                 required
                 value={horseName}
                 onChange={(event) => setHorseName(event.target.value)}
+                maxLength={120}
                 placeholder="Ex.: Estrela do Campo"
               />
+              <label htmlFor="horse-photo">URL da foto (opcional)</label>
+              <input
+                id="horse-photo"
+                type="url"
+                value={horsePhotoUrl}
+                onChange={(event) => setHorsePhotoUrl(event.target.value)}
+                maxLength={2000}
+                placeholder="https://..."
+              />
+              <label htmlFor="horse-owner">Proprietário (opcional)</label>
+              <input
+                id="horse-owner"
+                value={horseOwnerName}
+                onChange={(event) => setHorseOwnerName(event.target.value)}
+                maxLength={120}
+                placeholder="Digite o nome do proprietário"
+              />
+              <label htmlFor="horse-trainer">Treinador (opcional)</label>
+              <input
+                id="horse-trainer"
+                value={horseTrainerName}
+                onChange={(event) => setHorseTrainerName(event.target.value)}
+                maxLength={120}
+                placeholder="Digite o nome do treinador"
+              />
+              <label htmlFor="horse-breeds">Raça(s), separadas por vírgula (opcional)</label>
+              <input
+                id="horse-breeds"
+                value={horseBreeds}
+                onChange={(event) => setHorseBreeds(event.target.value)}
+                maxLength={500}
+                placeholder="Ex.: Mangalarga Marchador"
+              />
+              <label htmlFor="horse-category">Categoria</label>
+              <select
+                id="horse-category"
+                value={horseFormCategory}
+                onChange={(event) => setHorseFormCategory(event.target.value)}
+              >
+                <option value="ATLETA">Atleta</option>
+                <option value="MATRIZ">Matriz</option>
+                <option value="GARANHAO">Garanhão</option>
+                <option value="POTRO">Potro</option>
+                <option value="RECEPTORA">Receptora</option>
+              </select>
+              <label htmlFor="horse-status">Status</label>
+              <select
+                id="horse-status"
+                value={horseStatus}
+                onChange={(event) => setHorseStatus(event.target.value)}
+              >
+                <option value="EM_TREINO">Em treino</option>
+                <option value="EM_TRATAMENTO">Em tratamento</option>
+                <option value="DESCANSO">Descanso</option>
+              </select>
+              <label htmlFor="horse-father">Nome do pai (opcional)</label>
+              <input
+                id="horse-father"
+                value={horseFather}
+                onChange={(event) => setHorseFather(event.target.value)}
+                maxLength={120}
+                placeholder="Digite o nome do pai"
+              />
+              <label htmlFor="horse-mother">Nome da mãe (opcional)</label>
+              <input
+                id="horse-mother"
+                value={horseMother}
+                onChange={(event) => setHorseMother(event.target.value)}
+                maxLength={120}
+                placeholder="Digite o nome da mãe"
+              />
+              <label htmlFor="horse-birth-date">Data de nascimento (opcional)</label>
+              <input
+                id="horse-birth-date"
+                type="date"
+                value={horseBirthDate}
+                onChange={(event) => setHorseBirthDate(event.target.value)}
+              />
+              <label htmlFor="horse-registration">Número de registro ABCCMM (opcional)</label>
+              <input
+                id="horse-registration"
+                value={horseRegistration}
+                onChange={(event) => setHorseRegistration(event.target.value)}
+                maxLength={80}
+              />
+              <label htmlFor="horse-sex">Sexo</label>
+              <select
+                id="horse-sex"
+                value={horseSex}
+                onChange={(event) => setHorseSex(event.target.value)}
+              >
+                <option value="INDEFINIDO">Não informado</option>
+                <option value="MACHO">Macho</option>
+                <option value="FEMEA">Fêmea</option>
+              </select>
+              <label htmlFor="horse-coat">Pelagem (opcional)</label>
+              <select
+                id="horse-coat"
+                value={horseCoat}
+                onChange={(event) => setHorseCoat(event.target.value)}
+              >
+                <option value="">Selecione</option>
+                {horseCoatTypes.map((coat) => (
+                  <option key={coat} value={coat}>
+                    {coat}
+                  </option>
+                ))}
+              </select>
               <label htmlFor="horse-stable">Baia (opcional)</label>
               <input
                 id="horse-stable"
@@ -2286,16 +2626,46 @@ export function Dashboard({
                 onChange={(event) => setHorseStable(event.target.value)}
                 placeholder="Ex.: 04"
               />
+              <label htmlFor="horse-chip">Chip / resenha (opcional)</label>
+              <input
+                id="horse-chip"
+                value={horseChip}
+                onChange={(event) => setHorseChip(event.target.value)}
+                maxLength={120}
+              />
+              <label htmlFor="horse-feeding">Alimentação diária (opcional)</label>
+              <textarea
+                id="horse-feeding"
+                value={horseFeeding}
+                onChange={(event) => setHorseFeeding(event.target.value)}
+                maxLength={1000}
+                rows={3}
+              />
+              <label htmlFor="horse-monthly-fee">Mensalidade (R$)</label>
+              <input
+                id="horse-monthly-fee"
+                type="number"
+                min="0"
+                max="9999999999.99"
+                step="0.01"
+                value={horseMonthlyFee}
+                onChange={(event) => setHorseMonthlyFee(event.target.value)}
+              />
               <div className="modal-actions">
                 <button
                   type="button"
                   className="button button-quiet"
-                  onClick={() => setShowHorseForm(false)}
+                  onClick={closeHorseForm}
                 >
                   Cancelar
                 </button>
                 <button className="button button-primary" disabled={isSaving}>
-                  <Plus size={19} /> {isSaving ? "Salvando..." : "Salvar cavalo"}
+                  <Plus size={19} />
+                  {isSaving
+                    ? "Salvando..."
+                    : horseEditingId
+                      ? "Salvar alterações"
+                      : "Salvar cavalo"}
                 </button>
               </div>
             </form>

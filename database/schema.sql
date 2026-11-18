@@ -108,12 +108,16 @@ create table if not exists public.equinos (
   sexo text not null default 'INDEFINIDO'
     check (sexo in ('MACHO', 'FEMEA', 'INDEFINIDO')),
   data_nascimento date,
+  nome_pai text,
+  nome_mae text,
+  pelagem text,
   origem text not null default 'TERCEIRO' check (origem in ('PROPRIO', 'TERCEIRO')),
   categoria text not null default 'ATLETA'
     check (categoria in ('ATLETA', 'MATRIZ', 'GARANHAO', 'POTRO', 'RECEPTORA')),
   status text not null default 'DESCANSO'
     check (status in ('EM_TREINO', 'EM_TRATAMENTO', 'DESCANSO')),
   registro_associacao text,
+  excluido_em timestamptz,
   chip_resenha text,
   pai_id uuid,
   mae_id uuid,
@@ -134,6 +138,61 @@ create table if not exists public.equinos (
     foreign key (mae_id, tenant_id)
     references public.equinos (id, tenant_id)
 );
+
+alter table public.equinos
+  add column if not exists nome_pai text,
+  add column if not exists nome_mae text,
+  add column if not exists nome_proprietario text,
+  add column if not exists nome_treinador text,
+  add column if not exists pelagem text,
+  add column if not exists excluido_em timestamptz;
+
+update public.equinos as e
+set nome_proprietario = p.nome
+from public.proprietarios as p
+where p.id = e.proprietario_id
+  and p.tenant_id = e.tenant_id
+  and e.nome_proprietario is null;
+
+update public.equinos as e
+set nome_treinador = u.nome
+from public.usuarios as u
+where u.id = e.treinador_id
+  and u.tenant_id = e.tenant_id
+  and e.nome_treinador is null;
+
+update public.equinos as e
+set nome_pai = pai.nome
+from public.equinos as pai
+where pai.id = e.pai_id
+  and pai.tenant_id = e.tenant_id
+  and e.nome_pai is null;
+
+update public.equinos as e
+set nome_mae = mae.nome
+from public.equinos as mae
+where mae.id = e.mae_id
+  and mae.tenant_id = e.tenant_id
+  and e.nome_mae is null;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'equinos_pelagem_check'
+      and conrelid = 'public.equinos'::regclass
+  ) then
+    alter table public.equinos
+      add constraint equinos_pelagem_check check (
+        pelagem is null or pelagem in (
+          'Branco', 'Preto', 'Alazão', 'Baio', 'Castanha', 'Tordilha', 'Rosilha',
+          'Pampa de Preto', 'Pampa de Marrom', 'Pampa de Castanho', 'Pampa de Alazão'
+        )
+      ) not valid;
+  end if;
+end
+$$;
 
 create table if not exists public.reproducao_ciclos (
   id uuid primary key default gen_random_uuid(),
@@ -601,6 +660,7 @@ begin
     where e.tenant_id = tenant_key
       and e.proprietario_id = p_proprietario_id
       and e.valor_mensalidade > 0
+      and e.excluido_em is null
     on conflict (tenant_id, equino_id, competencia)
       where categoria = 'MENSALIDADE' and competencia is not null
       do nothing
@@ -636,6 +696,7 @@ begin
       and e.proprietario_id = p_proprietario_id
       and tm.cobrar_proprietario
       and tm.custo > 0
+      and e.excluido_em is null
       and tm.data_inicio >= p_competencia
       and tm.data_inicio < (p_competencia + interval '1 month')
     on conflict (origem_tratamento_id) do nothing

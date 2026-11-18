@@ -10,6 +10,19 @@ type HorseRecord = {
   raca: string[];
   categoria: string;
   status: string;
+  nome_pai: string | null;
+  nome_mae: string | null;
+  data_nascimento: string | null;
+  registro_associacao: string | null;
+  sexo: string;
+  pelagem: string | null;
+  foto_url?: string | null;
+  nome_proprietario?: string | null;
+  nome_treinador?: string | null;
+  chip_resenha?: string | null;
+  alimentacao_diaria?: string | null;
+  valor_mensalidade?: number;
+  created_at?: string | null;
 };
 
 type MedicationApplication = {
@@ -94,6 +107,12 @@ const demoHorses: HorseRecord[] = [
     raca: ["Quarto de Milha"],
     categoria: "ATLETA",
     status: "EM_TREINO",
+    nome_pai: null,
+    nome_mae: null,
+    data_nascimento: null,
+    registro_associacao: null,
+    sexo: "INDEFINIDO",
+    pelagem: null,
   },
   {
     id: "demo-2",
@@ -102,6 +121,12 @@ const demoHorses: HorseRecord[] = [
     raca: ["Mangalarga Marchador"],
     categoria: "ATLETA",
     status: "EM_TRATAMENTO",
+    nome_pai: null,
+    nome_mae: null,
+    data_nascimento: null,
+    registro_associacao: null,
+    sexo: "INDEFINIDO",
+    pelagem: null,
   },
   {
     id: "demo-3",
@@ -110,6 +135,12 @@ const demoHorses: HorseRecord[] = [
     raca: ["Crioulo"],
     categoria: "MATRIZ",
     status: "DESCANSO",
+    nome_pai: null,
+    nome_mae: null,
+    data_nascimento: null,
+    registro_associacao: null,
+    sexo: "INDEFINIDO",
+    pelagem: null,
   },
   {
     id: "demo-4",
@@ -118,6 +149,12 @@ const demoHorses: HorseRecord[] = [
     raca: ["Quarto de Milha"],
     categoria: "GARANHAO",
     status: "DESCANSO",
+    nome_pai: null,
+    nome_mae: null,
+    data_nascimento: null,
+    registro_associacao: null,
+    sexo: "INDEFINIDO",
+    pelagem: null,
   },
   {
     id: "demo-5",
@@ -126,6 +163,12 @@ const demoHorses: HorseRecord[] = [
     raca: ["Crioulo"],
     categoria: "RECEPTORA",
     status: "DESCANSO",
+    nome_pai: null,
+    nome_mae: null,
+    data_nascimento: null,
+    registro_associacao: null,
+    sexo: "INDEFINIDO",
+    pelagem: null,
   },
 ];
 
@@ -284,10 +327,17 @@ export default async function DashboardPage() {
     cyclesResult,
   ] = await Promise.all([
     pool.query<HorseRecord>(
-      `select id, nome, baia, raca, categoria, status
-       from public.equinos
-       where tenant_id = $1
-       order by nome
+      `select e.id, e.nome, e.baia, e.raca, e.categoria, e.status,
+              e.nome_pai, e.nome_mae,
+              e.data_nascimento::text as data_nascimento,
+              e.registro_associacao, e.sexo, e.pelagem, e.foto_url,
+              e.nome_proprietario, e.nome_treinador,
+              e.chip_resenha, e.alimentacao_diaria,
+              e.valor_mensalidade::double precision as valor_mensalidade,
+              e.created_at::text as created_at
+       from public.equinos as e
+       where e.tenant_id = $1 and e.excluido_em is null
+       order by e.nome
        limit 100`,
       [tenantId],
     ),

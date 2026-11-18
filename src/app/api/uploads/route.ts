@@ -111,7 +111,7 @@ export async function POST(request: Request) {
   const pool = getPool();
   const linkedRecord = await pool.query(
     type === "EQUINO"
-      ? "select id from public.equinos where id = $1 and tenant_id = $2"
+      ? "select id from public.equinos where id = $1 and tenant_id = $2 and excluido_em is null"
       : "select id from public.financeiro_lancamentos where id = $1 and tenant_id = $2",
     [type === "EQUINO" ? horseId : entryId, user.tenant_id],
   );

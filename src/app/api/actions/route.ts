@@ -69,6 +69,167 @@ function parseOptionalDate(value: unknown): string | null | undefined {
   return isDateOnly(value) ? value : undefined;
 }
 
+const horseCoatTypes = [
+  "Branco",
+  "Preto",
+  "Alazão",
+  "Baio",
+  "Castanha",
+  "Tordilha",
+  "Rosilha",
+  "Pampa de Preto",
+  "Pampa de Marrom",
+  "Pampa de Castanho",
+  "Pampa de Alazão",
+] as const;
+
+type HorseInput = {
+  nome_proprietario: string;
+  nome_treinador: string;
+  nome: string;
+  foto_url: string | null;
+  baia: string | null;
+  raca: string[];
+  sexo: "MACHO" | "FEMEA" | "INDEFINIDO";
+  data_nascimento: string | null;
+  nome_pai: string | null;
+  nome_mae: string | null;
+  pelagem: string | null;
+  categoria: "ATLETA" | "MATRIZ" | "GARANHAO" | "POTRO" | "RECEPTORA";
+  status: "EM_TREINO" | "EM_TRATAMENTO" | "DESCANSO";
+  registro_associacao: string | null;
+  chip_resenha: string | null;
+  alimentacao_diaria: string | null;
+  valor_mensalidade: number;
+};
+
+function parseHorseInput(body: Record<string, unknown>): HorseInput | null {
+  const nome = typeof body.nome === "string" ? body.nome.trim() : "";
+  const proprietario = parseOptionalText(body.nome_proprietario, 120);
+  const treinador = parseOptionalText(body.nome_treinador, 120);
+  const fotoUrl = parseOptionalText(body.foto_url, 2000);
+  const baia = parseOptionalText(body.baia, 40);
+  const nomePai = parseOptionalText(body.nome_pai, 120);
+  const nomeMae = parseOptionalText(body.nome_mae, 120);
+  const registro = parseOptionalText(body.registro_associacao, 80);
+  const chip = parseOptionalText(body.chip_resenha, 120);
+  const alimentacao = parseOptionalText(body.alimentacao_diaria, 1000);
+  const mensalidade = parseOptionalDecimal(body.valor_mensalidade);
+  const dataNascimento = parseOptionalDate(body.data_nascimento);
+  const sexo = body.sexo === undefined ? "INDEFINIDO" : body.sexo;
+  const pelagem = parseOptionalText(body.pelagem, 40);
+  const categoria = body.categoria === undefined ? "ATLETA" : body.categoria;
+  const status = body.status === undefined ? "DESCANSO" : body.status;
+  const rawBreeds = body.raca;
+  const breedsValid =
+    rawBreeds === undefined ||
+    rawBreeds === null ||
+    typeof rawBreeds === "string" ||
+    Array.isArray(rawBreeds);
+  const breeds: unknown[] = Array.isArray(rawBreeds)
+    ? rawBreeds
+    : typeof rawBreeds === "string"
+      ? rawBreeds.split(",")
+      : [];
+  const raca = breeds
+    .map((breed) => (typeof breed === "string" ? breed.trim() : ""))
+    .filter(Boolean);
+  const fee = mensalidade.value ?? 0;
+
+  if (
+    !nome ||
+    nome.length > 120 ||
+    !proprietario.valid ||
+    !treinador.valid ||
+    !fotoUrl.valid ||
+    !isHttpUrl(fotoUrl.value) ||
+    !baia.valid ||
+    !nomePai.valid ||
+    !nomeMae.valid ||
+    !registro.valid ||
+    !chip.valid ||
+    !alimentacao.valid ||
+    !mensalidade.valid ||
+    fee < 0 ||
+    fee > 9999999999.99 ||
+    Math.abs(fee * 100 - Math.round(fee * 100)) > 0.000001 ||
+    !pelagem.valid ||
+    !horseCoatValid(pelagem.value) ||
+    dataNascimento === undefined ||
+    (sexo !== "MACHO" && sexo !== "FEMEA" && sexo !== "INDEFINIDO") ||
+    (categoria !== "ATLETA" &&
+      categoria !== "MATRIZ" &&
+      categoria !== "GARANHAO" &&
+      categoria !== "POTRO" &&
+      categoria !== "RECEPTORA") ||
+    (status !== "EM_TREINO" &&
+      status !== "EM_TRATAMENTO" &&
+      status !== "DESCANSO") ||
+    !breedsValid ||
+    breeds.length > 20 ||
+    (Array.isArray(rawBreeds) &&
+      rawBreeds.some((breed) => typeof breed !== "string")) ||
+    raca.some((breed) => breed.length > 80) ||
+    raca.join(", ").length > 500
+  ) {
+    return null;
+  }
+
+  return {
+    nome_proprietario: proprietario.value ?? "",
+    nome_treinador: treinador.value ?? "",
+    nome,
+    foto_url: fotoUrl.value,
+    baia: baia.value,
+    raca,
+    sexo,
+    data_nascimento: dataNascimento,
+    nome_pai: nomePai.value,
+    nome_mae: nomeMae.value,
+    pelagem: pelagem.value,
+    categoria,
+    status,
+    registro_associacao: registro.value,
+    chip_resenha: chip.value,
+    alimentacao_diaria: alimentacao.value,
+    valor_mensalidade: fee,
+  };
+}
+
+function isHttpUrl(value: string | null) {
+  if (value === null) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function horseCoatValid(value: string | null) {
+  return value === null || horseCoatTypes.some((coat) => coat === value);
+}
+
+async function fetchHorseForResponse(
+  pool: ReturnType<typeof getPool>,
+  tenantId: string,
+  horseId: string,
+) {
+  const result = await pool.query(
+    `select e.id, e.nome_proprietario, e.nome_treinador,
+            e.nome, e.foto_url, e.baia, e.raca, e.sexo,
+            e.data_nascimento::text as data_nascimento, e.nome_pai, e.nome_mae,
+            e.pelagem, e.categoria, e.status, e.registro_associacao,
+            e.chip_resenha, e.alimentacao_diaria,
+            e.valor_mensalidade::double precision as valor_mensalidade,
+            e.created_at::text as created_at
+     from public.equinos as e
+     where e.id = $1 and e.tenant_id = $2 and e.excluido_em is null`,
+    [horseId, tenantId],
+  );
+  return result.rows[0];
+}
+
 function getMissingClientField(body: Record<string, unknown>): string | null {
   const requiredTextFields: [string, string][] = [
     ["nome", "Nome do cliente"],
@@ -272,26 +433,141 @@ export async function POST(request: Request) {
 
   const isManager = user.perfil === "ADMIN";
   const hasTenant = Boolean(user.tenant_id);
+  const canManageHorses =
+    hasTenant && (user.perfil === "ADMIN" || user.perfil === "OPERACIONAL");
   const pool = getPool();
 
   try {
     switch (body.action) {
       case "createHorse": {
-        if (!isManager || !hasTenant) {
-          return errorResponse("Somente gestores podem cadastrar cavalos.", 403);
+        if (!canManageHorses) {
+          return errorResponse("Ação permitida somente a usuários do centro.", 403);
         }
-        const nome = typeof body.nome === "string" ? body.nome.trim() : "";
-        const baia = typeof body.baia === "string" ? body.baia.trim() : "";
-        if (!nome || nome.length > 120 || baia.length > 40) {
-          return errorResponse("Informe um nome e uma baia válidos.", 400);
+        const fields = parseHorseInput(body);
+        if (!fields) {
+          return errorResponse(
+            "Confira os dados do cavalo e os valores informados.",
+            400,
+          );
+        }
+        const result = await pool.query<{ id: string }>(
+          `insert into public.equinos (
+             tenant_id, nome_proprietario, nome_treinador, nome, foto_url, baia, raca,
+             sexo, data_nascimento, nome_pai, nome_mae, pelagem, categoria, status,
+             registro_associacao, chip_resenha, alimentacao_diaria, valor_mensalidade,
+             origem
+           )
+           values (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12,
+             $13, $14, $15, $16, $17, $18, 'PROPRIO'
+           )
+           returning id`,
+          [
+            user.tenant_id,
+            fields.nome_proprietario,
+            fields.nome_treinador,
+            fields.nome,
+            fields.foto_url,
+            fields.baia,
+            fields.raca,
+            fields.sexo,
+            fields.data_nascimento,
+            fields.nome_pai,
+            fields.nome_mae,
+            fields.pelagem,
+            fields.categoria,
+            fields.status,
+            fields.registro_associacao,
+            fields.chip_resenha,
+            fields.alimentacao_diaria,
+            fields.valor_mensalidade,
+          ],
+        );
+        const horse = await fetchHorseForResponse(
+          pool,
+          user.tenant_id!,
+          result.rows[0].id,
+        );
+        if (!horse) {
+          return errorResponse("Não foi possível carregar o cavalo cadastrado.", 500);
+        }
+        return Response.json({ horse }, { status: 201 });
+      }
+
+      case "updateHorse": {
+        if (!canManageHorses) {
+          return errorResponse("Ação permitida somente a usuários do centro.", 403);
+        }
+        if (!isUuid(body.id)) {
+          return errorResponse("Cavalo inválido.", 400);
+        }
+        const fields = parseHorseInput(body);
+        if (!fields) {
+          return errorResponse(
+            "Confira os dados do cavalo e os valores informados.",
+            400,
+          );
+        }
+        const result = await pool.query<{ id: string }>(
+          `update public.equinos
+           set nome_proprietario = $1, nome_treinador = $2, nome = $3,
+               foto_url = $4, baia = $5, raca = $6, sexo = $7,
+               data_nascimento = $8::date, nome_pai = $9, nome_mae = $10,
+               pelagem = $11, categoria = $12, status = $13,
+               registro_associacao = $14, chip_resenha = $15,
+               alimentacao_diaria = $16, valor_mensalidade = $17
+           where id = $18 and tenant_id = $19 and excluido_em is null
+           returning id`,
+          [
+            fields.nome_proprietario,
+            fields.nome_treinador,
+            fields.nome,
+            fields.foto_url,
+            fields.baia,
+            fields.raca,
+            fields.sexo,
+            fields.data_nascimento,
+            fields.nome_pai,
+            fields.nome_mae,
+            fields.pelagem,
+            fields.categoria,
+            fields.status,
+            fields.registro_associacao,
+            fields.chip_resenha,
+            fields.alimentacao_diaria,
+            fields.valor_mensalidade,
+            body.id,
+            user.tenant_id,
+          ],
+        );
+        if (!result.rowCount) {
+          return errorResponse("Cavalo não encontrado neste centro.", 404);
+        }
+        const horse = await fetchHorseForResponse(pool, user.tenant_id!, result.rows[0].id);
+        if (!horse) {
+          return errorResponse("Não foi possível carregar o cavalo atualizado.", 500);
+        }
+        return Response.json({ horse });
+      }
+
+      case "deleteHorse": {
+        if (!canManageHorses) {
+          return errorResponse("Ação permitida somente a usuários do centro.", 403);
+        }
+        if (!isUuid(body.id)) {
+          return errorResponse("Cavalo inválido.", 400);
         }
         const result = await pool.query(
-          `insert into public.equinos (tenant_id, nome, baia, categoria, origem, status)
-           values ($1, $2, $3, 'ATLETA', 'PROPRIO', 'DESCANSO')
-           returning id, nome, baia, raca, categoria, status`,
-          [user.tenant_id, nome, baia || null],
+          `update public.equinos
+           set excluido_em = now()
+           where id = $1 and tenant_id = $2 and excluido_em is null
+           returning id`,
+          [body.id, user.tenant_id],
         );
-        return Response.json({ horse: result.rows[0] }, { status: 201 });
+        if (!result.rowCount) {
+          return errorResponse("Cavalo não encontrado neste centro.", 404);
+        }
+        return Response.json({ deleted: true });
       }
 
       case "applyMedication": {
@@ -454,7 +730,7 @@ export async function POST(request: Request) {
         const horses = await pool.query<{ id: string; categoria: string }>(
           `select id, categoria
            from public.equinos
-           where tenant_id = $1 and id = any($2::uuid[])`,
+          where tenant_id = $1 and id = any($2::uuid[]) and excluido_em is null`,
           [user.tenant_id, horseIds],
         );
         const mare = horses.rows.find((horse) => horse.id === body.mareId);
