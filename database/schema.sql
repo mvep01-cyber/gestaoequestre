@@ -99,6 +99,7 @@ create index if not exists cadastros_cte_haras_tenant_nome_idx
 create table if not exists public.equinos (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants (id) on delete cascade,
+  criado_por uuid references public.usuarios (id) on delete set null,
   proprietario_id uuid,
   treinador_id uuid,
   nome text not null,
@@ -140,6 +141,7 @@ create table if not exists public.equinos (
 );
 
 alter table public.equinos
+  add column if not exists criado_por uuid references public.usuarios (id) on delete set null,
   add column if not exists nome_pai text,
   add column if not exists nome_mae text,
   add column if not exists nome_proprietario text,
@@ -352,6 +354,8 @@ create table if not exists public.financeiro_lancamentos (
 
 create index if not exists equinos_tenant_status_idx
   on public.equinos (tenant_id, status);
+create index if not exists equinos_tenant_criador_idx
+  on public.equinos (tenant_id, criado_por, excluido_em);
 create index if not exists tratamentos_tenant_equino_idx
   on public.tratamentos_medicamentos (tenant_id, equino_id, data_inicio);
 create index if not exists aplicacoes_tenant_agenda_idx

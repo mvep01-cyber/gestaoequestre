@@ -337,15 +337,21 @@ export default async function DashboardPage() {
               e.created_at::text as created_at
        from public.equinos as e
        where e.tenant_id = $1 and e.excluido_em is null
+         and ($2::boolean or e.criado_por = $3)
        order by e.nome
        limit 100`,
-      [tenantId],
+      [tenantId, isManager, user.id],
     ),
     pool.query<{ count: string }>(
       `select count(*)::text as count
-       from public.medicamentos_aplicacoes
-       where tenant_id = $1 and status = 'PENDENTE'`,
-      [tenantId],
+       from public.medicamentos_aplicacoes as ma
+       join public.tratamentos_medicamentos as tm
+         on tm.id = ma.tratamento_id and tm.tenant_id = ma.tenant_id
+       join public.equinos as e
+         on e.id = tm.equino_id and e.tenant_id = tm.tenant_id
+       where ma.tenant_id = $1 and ma.status = 'PENDENTE'
+         and ($2::boolean or e.criado_por = $3)`,
+      [tenantId, isManager, user.id],
     ),
     pool.query<MedicationApplication & { data_hora_prevista: Date }>(
       `select ma.id, ma.data_hora_prevista, tm.descricao, e.nome as nome_equino
@@ -355,15 +361,19 @@ export default async function DashboardPage() {
        join public.equinos as e
          on e.id = tm.equino_id and e.tenant_id = tm.tenant_id
        where ma.tenant_id = $1 and ma.status = 'PENDENTE'
+         and ($2::boolean or e.criado_por = $3)
        order by ma.data_hora_prevista
        limit 12`,
-      [tenantId],
+      [tenantId, isManager, user.id],
     ),
     pool.query<{ count: string }>(
       `select count(*)::text as count
-       from public.agenda_treinos
-       where tenant_id = $1 and data_hora >= $2 and data_hora < $3`,
-      [tenantId, dayStart.toISOString(), dayEnd.toISOString()],
+       from public.agenda_treinos as at
+       join public.equinos as e
+         on e.id = at.equino_id and e.tenant_id = at.tenant_id
+       where at.tenant_id = $1 and at.data_hora >= $2 and at.data_hora < $3
+         and ($4::boolean or e.criado_por = $5)`,
+      [tenantId, dayStart.toISOString(), dayEnd.toISOString(), isManager, user.id],
     ),
     pool.query<
       TrainingSession & {
@@ -375,9 +385,10 @@ export default async function DashboardPage() {
        join public.equinos as e
          on e.id = at.equino_id and e.tenant_id = at.tenant_id
        where at.tenant_id = $1 and at.data_hora >= $2 and at.data_hora < $3
+         and ($4::boolean or e.criado_por = $5)
        order by at.data_hora
        limit 20`,
-      [tenantId, dayStart.toISOString(), dayEnd.toISOString()],
+      [tenantId, dayStart.toISOString(), dayEnd.toISOString(), isManager, user.id],
     ),
     ownerResultQuery,
     cteHarasRegistrationsQuery,

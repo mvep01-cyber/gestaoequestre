@@ -214,6 +214,8 @@ async function fetchHorseForResponse(
   pool: ReturnType<typeof getPool>,
   tenantId: string,
   horseId: string,
+  isManager: boolean,
+  userId: string,
 ) {
   const result = await pool.query(
     `select e.id, e.nome_proprietario, e.nome_treinador,
@@ -224,8 +226,9 @@ async function fetchHorseForResponse(
             e.valor_mensalidade::double precision as valor_mensalidade,
             e.created_at::text as created_at
      from public.equinos as e
-     where e.id = $1 and e.tenant_id = $2 and e.excluido_em is null`,
-    [horseId, tenantId],
+     where e.id = $1 and e.tenant_id = $2 and e.excluido_em is null
+       and ($3::boolean or e.criado_por = $4)`,
+    [horseId, tenantId, isManager, userId],
   );
   return result.rows[0];
 }
@@ -452,18 +455,19 @@ export async function POST(request: Request) {
         }
         const result = await pool.query<{ id: string }>(
           `insert into public.equinos (
-             tenant_id, nome_proprietario, nome_treinador, nome, foto_url, baia, raca,
+             tenant_id, criado_por, nome_proprietario, nome_treinador, nome, foto_url, baia, raca,
              sexo, data_nascimento, nome_pai, nome_mae, pelagem, categoria, status,
              registro_associacao, chip_resenha, alimentacao_diaria, valor_mensalidade,
              origem
            )
            values (
-             $1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12,
-             $13, $14, $15, $16, $17, $18, 'PROPRIO'
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date, $11, $12,
+             $13, $14, $15, $16, $17, $18, $19, 'PROPRIO'
            )
            returning id`,
           [
             user.tenant_id,
+            user.id,
             fields.nome_proprietario,
             fields.nome_treinador,
             fields.nome,
@@ -487,6 +491,8 @@ export async function POST(request: Request) {
           pool,
           user.tenant_id!,
           result.rows[0].id,
+          isManager,
+          user.id,
         );
         if (!horse) {
           return errorResponse("Não foi possível carregar o cavalo cadastrado.", 500);
@@ -517,6 +523,7 @@ export async function POST(request: Request) {
                registro_associacao = $14, chip_resenha = $15,
                alimentacao_diaria = $16, valor_mensalidade = $17
            where id = $18 and tenant_id = $19 and excluido_em is null
+             and ($20::boolean or criado_por = $21)
            returning id`,
           [
             fields.nome_proprietario,
@@ -538,12 +545,20 @@ export async function POST(request: Request) {
             fields.valor_mensalidade,
             body.id,
             user.tenant_id,
+            isManager,
+            user.id,
           ],
         );
         if (!result.rowCount) {
           return errorResponse("Cavalo não encontrado neste centro.", 404);
         }
-        const horse = await fetchHorseForResponse(pool, user.tenant_id!, result.rows[0].id);
+        const horse = await fetchHorseForResponse(
+          pool,
+          user.tenant_id!,
+          result.rows[0].id,
+          isManager,
+          user.id,
+        );
         if (!horse) {
           return errorResponse("Não foi possível carregar o cavalo atualizado.", 500);
         }
@@ -561,8 +576,9 @@ export async function POST(request: Request) {
           `update public.equinos
            set excluido_em = now()
            where id = $1 and tenant_id = $2 and excluido_em is null
+             and ($3::boolean or criado_por = $4)
            returning id`,
-          [body.id, user.tenant_id],
+          [body.id, user.tenant_id, isManager, user.id],
         );
         if (!result.rowCount) {
           return errorResponse("Cavalo não encontrado neste centro.", 404);
@@ -575,11 +591,20 @@ export async function POST(request: Request) {
           return errorResponse("Aplicação inválida.", 400);
         }
         const result = await pool.query(
-          `update public.medicamentos_aplicacoes
+          `update public.medicamentos_aplicacoes as ma
            set status = 'APLICADO', aplicado_por = $1, aplicado_em = now()
-           where id = $2 and tenant_id = $3 and status = 'PENDENTE'
+           where ma.id = $2 and ma.tenant_id = $3 and ma.status = 'PENDENTE'
+             and exists (
+               select 1
+               from public.tratamentos_medicamentos as tm
+               join public.equinos as e
+                 on e.id = tm.equino_id and e.tenant_id = tm.tenant_id
+               where tm.id = ma.tratamento_id
+                 and tm.tenant_id = ma.tenant_id
+                 and ($4::boolean or e.criado_por = $5)
+             )
            returning id`,
-          [user.id, body.id, user.tenant_id],
+          [user.id, body.id, user.tenant_id, isManager, user.id],
         );
         if (!result.rowCount) {
           return errorResponse("Aplicação não encontrada ou já registrada.", 404);
@@ -592,11 +617,18 @@ export async function POST(request: Request) {
           return errorResponse("Treino inválido.", 400);
         }
         const result = await pool.query(
-          `update public.agenda_treinos
+          `update public.agenda_treinos as at
            set status = 'CONCLUIDO'
-           where id = $1 and tenant_id = $2 and status = 'PENDENTE'
+           where at.id = $1 and at.tenant_id = $2 and at.status = 'PENDENTE'
+             and exists (
+               select 1
+               from public.equinos as e
+               where e.id = at.equino_id
+                 and e.tenant_id = at.tenant_id
+                 and ($3::boolean or e.criado_por = $4)
+             )
            returning id`,
-          [body.id, user.tenant_id],
+          [body.id, user.tenant_id, isManager, user.id],
         );
         if (!result.rowCount) {
           return errorResponse("Treino não encontrado ou já concluído.", 404);

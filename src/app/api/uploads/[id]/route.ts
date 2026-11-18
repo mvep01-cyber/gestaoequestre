@@ -22,8 +22,9 @@ export async function GET(
     nome_original: string;
     mime_type: string;
     tipo: string;
+    equino_id: string | null;
   }>(
-    `select caminho, nome_original, mime_type, tipo
+    `select caminho, nome_original, mime_type, tipo, equino_id
      from public.arquivos
      where id = $1 and tenant_id = $2`,
     [id, user.tenant_id],
@@ -31,6 +32,18 @@ export async function GET(
   const fileRecord = result.rows[0];
   if (!fileRecord || (fileRecord.tipo === "COMPROVANTE" && user.perfil !== "ADMIN")) {
     return Response.json({ error: "Arquivo não encontrado." }, { status: 404 });
+  }
+  if (fileRecord.tipo === "EQUINO" && user.perfil !== "ADMIN") {
+    const horseAccess = await getPool().query(
+      `select 1
+       from public.equinos
+       where id = $1 and tenant_id = $2 and criado_por = $3
+         and excluido_em is null`,
+      [fileRecord.equino_id, user.tenant_id, user.id],
+    );
+    if (!horseAccess.rowCount) {
+      return Response.json({ error: "Arquivo não encontrado." }, { status: 404 });
+    }
   }
 
   const storageRoot = path.resolve(process.cwd(), "storage", "uploads");
