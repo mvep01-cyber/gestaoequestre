@@ -31,6 +31,7 @@ import { signOut } from "next-auth/react";
 
 type HorseRecord = {
   id: string;
+  proprietario_id?: string | null;
   nome: string;
   baia: string | null;
   raca: string[];
@@ -145,6 +146,8 @@ type ReproductionCycle = {
 type ClientRecord = {
   id: string;
   nome: string;
+  cte_haras_nome?: string | null;
+  cte_haras_tipo?: "CTE" | "HARAS" | null;
   telefone_whatsapp: string | null;
   documento: string | null;
   cpf: string | null;
@@ -166,6 +169,7 @@ type CteHarasRegistration = ClientRecord & {
 type DashboardProps = {
   demo: boolean;
   role: string;
+  clientRegistrationType?: "CTE" | "HARAS" | null;
   plan: string;
   tenantName: string;
   horses: HorseRecord[];
@@ -615,6 +619,7 @@ function BadgeCheckIcon() {
 export function Dashboard({
   demo,
   role,
+  clientRegistrationType = null,
   plan,
   tenantName,
   horses: initialHorses,
@@ -634,7 +639,13 @@ export function Dashboard({
 }: DashboardProps) {
   const router = useRouter();
   const [activeSection, setActiveSection] = useState<Section>(
-    role === "SUPER_ADMIN" ? "admin" : role === "CLIENTE" ? "cteHarasRegistrations" : "home",
+    role === "SUPER_ADMIN"
+      ? "admin"
+      : role === "CLIENTE"
+        ? clientRegistrationType === "CTE" || clientRegistrationType === "HARAS"
+          ? "horses"
+          : "cteHarasRegistrations"
+        : "home",
   );
   const [horses, setHorses] = useState(initialHorses);
   const [applications, setApplications] = useState(
@@ -661,6 +672,7 @@ export function Dashboard({
   const [horseName, setHorseName] = useState("");
   const [horseStable, setHorseStable] = useState("");
   const [horseOwnerName, setHorseOwnerName] = useState("");
+  const [horseOwnerId, setHorseOwnerId] = useState("");
   const [horseTrainerName, setHorseTrainerName] = useState("");
   const [horseFather, setHorseFather] = useState("");
   const [horseMother, setHorseMother] = useState("");
@@ -694,13 +706,21 @@ export function Dashboard({
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isAdmin = role === "ADMIN";
   const isClient = role === "CLIENTE";
-  const canManageHorses = isAdmin || isOperational;
+  const isClientAccount =
+    isClient &&
+    (clientRegistrationType === "CTE" || clientRegistrationType === "HARAS");
+  const canManageHorses = isAdmin || isOperational || isClientAccount;
+  const canManageClients = isAdmin || isOperational || isClientAccount;
 
   const visibleNav = useMemo(
     () =>
       navItems.filter((item) => {
         if (isSuperAdmin) return item.id === "admin";
-        if (isClient) return item.id === "cteHarasRegistrations";
+        if (isClient) {
+          return isClientAccount
+            ? item.id === "horses" || item.id === "clients"
+            : item.id === "cteHarasRegistrations";
+        }
         if (item.id === "cteHarasRegistrations") return isAdmin;
         if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || item.id === "finance" || item.id === "clients";
         if (item.id === "breeding") return isHaras && !isOperational;
@@ -708,7 +728,7 @@ export function Dashboard({
         if (item.id === "admin") return isSuperAdmin;
         return true;
       }),
-    [isAdmin, isClient, isHaras, isOperational, isSuperAdmin],
+    [isAdmin, isClient, isClientAccount, isHaras, isOperational, isSuperAdmin],
   );
 
   const filteredHorses = useMemo(() => {
@@ -799,6 +819,11 @@ export function Dashboard({
     setHorseName(horse?.nome ?? "");
     setHorseStable(horse?.baia ?? "");
     setHorseOwnerName(horse?.nome_proprietario ?? "");
+    setHorseOwnerId(
+      horse?.proprietario_id ??
+        clients.find((client) => client.nome === horse?.nome_proprietario)?.id ??
+        "",
+    );
     setHorseTrainerName(horse?.nome_treinador ?? "");
     setHorseFather(horse?.nome_pai ?? "");
     setHorseMother(horse?.nome_mae ?? "");
@@ -826,10 +851,14 @@ export function Dashboard({
     setFeedback("");
     setIsSaving(true);
 
+    const selectedOwner = clients.find((client) => client.id === horseOwnerId);
     const horseFields = {
       nome: horseName.trim(),
       baia: horseStable.trim() || null,
-      nome_proprietario: horseOwnerName.trim() || null,
+      nome_proprietario: isClientAccount
+        ? selectedOwner?.nome ?? null
+        : horseOwnerName.trim() || null,
+      proprietario_id: isClientAccount ? selectedOwner?.id ?? null : null,
       nome_treinador: horseTrainerName.trim() || null,
       nome_pai: horseFather.trim() || null,
       nome_mae: horseMother.trim() || null,
@@ -1286,6 +1315,8 @@ export function Dashboard({
             currentClient.id === updatedClient.id
               ? {
                   ...client,
+                  cte_haras_nome: currentClient.cte_haras_nome,
+                  cte_haras_tipo: currentClient.cte_haras_tipo,
                   numero_socio_abccmm:
                     typeof client.numero_socio_abccmm === "string"
                       ? Number(client.numero_socio_abccmm)
@@ -2296,7 +2327,7 @@ export function Dashboard({
               onChange={(event) => setSearch(event.target.value)}
             />
           </form>
-          {(isAdmin || isOperational) && (
+          {canManageClients && (
             <button
               className="button button-primary"
               onClick={() => {
@@ -2329,6 +2360,7 @@ export function Dashboard({
                   <th scope="col">Telefone</th>
                   <th scope="col">Data de início</th>
                   <th scope="col">Sócio ABCCMM</th>
+                  {isAdmin && <th scope="col">CTE/Haras cadastrado</th>}
                   <th scope="col">Ações</th>
                 </tr>
               </thead>
@@ -2339,9 +2371,16 @@ export function Dashboard({
                     <td>{client.telefone_whatsapp || "—"}</td>
                     <td>{formatClientDate(client.data_inicio)}</td>
                     <td>{client.numero_socio_abccmm ?? "—"}</td>
+                    {isAdmin && (
+                      <td>
+                        {client.cte_haras_nome
+                          ? `${client.cte_haras_tipo === "CTE" ? "CTE" : "Haras"} — ${client.cte_haras_nome}`
+                          : "Sem vínculo CTE/Haras"}
+                      </td>
+                    )}
                     <td>
                       <div className="client-row-actions">
-                        {(isAdmin || isOperational) && (
+                        {canManageClients && (
                           <button
                             className="button button-secondary"
                             onClick={() => {
@@ -2440,7 +2479,17 @@ export function Dashboard({
         <div className="sidebar-bottom">
           <div className="role-label">
             <ShieldCheck size={17} />
-            <span>{role === "OPERACIONAL" ? "Equipe operacional" : role === "SUPER_ADMIN" ? "Super administrador" : "Administrador"}</span>
+            <span>
+              {role === "OPERACIONAL"
+                ? "Equipe operacional"
+                : role === "SUPER_ADMIN"
+                  ? "Super administrador"
+                  : isClientAccount
+                    ? `Acesso ${clientRegistrationType === "CTE" ? "CTE" : "Haras"}`
+                    : isClient
+                      ? "Acesso do cliente"
+                      : "Administrador"}
+            </span>
           </div>
           {!demo && (
             <button className="logout-button" onClick={() => void handleLogout()}>
@@ -2570,13 +2619,28 @@ export function Dashboard({
                 placeholder="https://..."
               />
               <label htmlFor="horse-owner">Proprietário (opcional)</label>
-              <input
-                id="horse-owner"
-                value={horseOwnerName}
-                onChange={(event) => setHorseOwnerName(event.target.value)}
-                maxLength={120}
-                placeholder="Digite o nome do proprietário"
-              />
+              {isClientAccount ? (
+                <select
+                  id="horse-owner"
+                  value={horseOwnerId}
+                  onChange={(event) => setHorseOwnerId(event.target.value)}
+                >
+                  <option value="">Sem proprietário selecionado</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.nome}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  id="horse-owner"
+                  value={horseOwnerName}
+                  onChange={(event) => setHorseOwnerName(event.target.value)}
+                  maxLength={120}
+                  placeholder="Digite o nome do proprietário"
+                />
+              )}
               <label htmlFor="horse-trainer">Treinador (opcional)</label>
               <input
                 id="horse-trainer"

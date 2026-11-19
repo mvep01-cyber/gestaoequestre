@@ -16,6 +16,14 @@ type ReproductionCycle = {
   potro_gerado_id: string | null;
 };
 
+const clientAccountActions = new Set([
+  "createHorse",
+  "updateHorse",
+  "deleteHorse",
+  "createClient",
+  "updateClient",
+]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -86,6 +94,7 @@ const horseCoatTypes = [
 
 type HorseInput = {
   nome_proprietario: string;
+  proprietario_id: string | null;
   nome_treinador: string;
   nome: string;
   foto_url: string | null;
@@ -107,6 +116,13 @@ type HorseInput = {
 function parseHorseInput(body: Record<string, unknown>): HorseInput | null {
   const nome = typeof body.nome === "string" ? body.nome.trim() : "";
   const proprietario = parseOptionalText(body.nome_proprietario, 120);
+  const rawOwnerId = body.proprietario_id;
+  const proprietarioId =
+    rawOwnerId === undefined || rawOwnerId === null || rawOwnerId === ""
+      ? null
+      : isUuid(rawOwnerId)
+        ? rawOwnerId
+        : undefined;
   const treinador = parseOptionalText(body.nome_treinador, 120);
   const fotoUrl = parseOptionalText(body.foto_url, 2000);
   const baia = parseOptionalText(body.baia, 40);
@@ -141,6 +157,7 @@ function parseHorseInput(body: Record<string, unknown>): HorseInput | null {
     !nome ||
     nome.length > 120 ||
     !proprietario.valid ||
+    proprietarioId === undefined ||
     !treinador.valid ||
     !fotoUrl.valid ||
     !isHttpUrl(fotoUrl.value) ||
@@ -178,6 +195,7 @@ function parseHorseInput(body: Record<string, unknown>): HorseInput | null {
 
   return {
     nome_proprietario: proprietario.value ?? "",
+    proprietario_id: proprietarioId,
     nome_treinador: treinador.value ?? "",
     nome,
     foto_url: fotoUrl.value,
@@ -219,7 +237,7 @@ async function fetchHorseForResponse(
   userId: string,
 ) {
   const result = await pool.query(
-    `select e.id, e.nome_proprietario, e.nome_treinador,
+    `select e.id, e.proprietario_id, e.nome_proprietario, e.nome_treinador,
             e.nome, e.foto_url, e.baia, e.raca, e.sexo,
             e.data_nascimento::text as data_nascimento, e.nome_pai, e.nome_mae,
             e.pelagem, e.categoria, e.status, e.registro_associacao,
@@ -232,6 +250,32 @@ async function fetchHorseForResponse(
     [horseId, tenantId, isManager, userId],
   );
   return result.rows[0];
+}
+
+async function resolveHorseOwner(
+  pool: ReturnType<typeof getPool>,
+  tenantId: string,
+  userId: string,
+  ownerId: string | null,
+  clientAccount: boolean,
+  providedName: string,
+) {
+  if (!clientAccount) {
+    return { id: null, name: providedName || null };
+  }
+  if (!ownerId) {
+    return { id: null, name: null };
+  }
+
+  const result = await pool.query<{ id: string; nome: string }>(
+    `select id, nome
+     from public.proprietarios
+     where id = $1 and tenant_id = $2 and criado_por = $3
+     limit 1`,
+    [ownerId, tenantId, userId],
+  );
+  const owner = result.rows[0];
+  return owner ? { id: owner.id, name: owner.nome } : null;
 }
 
 function getMissingClientField(body: Record<string, unknown>): string | null {
@@ -437,8 +481,21 @@ export async function POST(request: Request) {
 
   const isManager = user.perfil === "ADMIN";
   const hasTenant = Boolean(user.tenant_id);
+  const isClientAccount =
+    user.perfil === "CLIENTE" &&
+    (user.tipo_cadastro === "CTE" || user.tipo_cadastro === "HARAS");
   const canManageHorses =
-    hasTenant && (user.perfil === "ADMIN" || user.perfil === "OPERACIONAL");
+    hasTenant &&
+    (user.perfil === "ADMIN" || user.perfil === "OPERACIONAL" || isClientAccount);
+  const canManageClients =
+    hasTenant &&
+    (user.perfil === "ADMIN" || user.perfil === "OPERACIONAL" || isClientAccount);
+  if (
+    user.perfil === "CLIENTE" &&
+    (!isClientAccount || !clientAccountActions.has(body.action))
+  ) {
+    return errorResponse("Este acesso não tem permissão para esta ação.", 403);
+  }
   const pool = getPool();
 
   try {
@@ -454,22 +511,35 @@ export async function POST(request: Request) {
             400,
           );
         }
+        const owner = await resolveHorseOwner(
+          pool,
+          user.tenant_id!,
+          user.id,
+          fields.proprietario_id,
+          isClientAccount,
+          fields.nome_proprietario,
+        );
+        if (!owner) {
+          return errorResponse("Proprietário não encontrado no seu cadastro.", 403);
+        }
         const result = await pool.query<{ id: string }>(
           `insert into public.equinos (
-             tenant_id, criado_por, nome_proprietario, nome_treinador, nome, foto_url, baia, raca,
+             tenant_id, criado_por, nome_proprietario, proprietario_id,
+             nome_treinador, nome, foto_url, baia, raca,
              sexo, data_nascimento, nome_pai, nome_mae, pelagem, categoria, status,
              registro_associacao, chip_resenha, alimentacao_diaria, valor_mensalidade,
              origem
            )
            values (
-             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date, $11, $12,
-             $13, $14, $15, $16, $17, $18, $19, 'PROPRIO'
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, $12,
+             $13, $14, $15, $16, $17, $18, $19, $20, 'PROPRIO'
            )
            returning id`,
           [
             user.tenant_id,
             user.id,
-            fields.nome_proprietario,
+            owner.name,
+            owner.id,
             fields.nome_treinador,
             fields.nome,
             fields.foto_url,
@@ -515,19 +585,31 @@ export async function POST(request: Request) {
             400,
           );
         }
+        const owner = await resolveHorseOwner(
+          pool,
+          user.tenant_id!,
+          user.id,
+          fields.proprietario_id,
+          isClientAccount,
+          fields.nome_proprietario,
+        );
+        if (!owner) {
+          return errorResponse("Proprietário não encontrado no seu cadastro.", 403);
+        }
         const result = await pool.query<{ id: string }>(
           `update public.equinos
-           set nome_proprietario = $1, nome_treinador = $2, nome = $3,
-               foto_url = $4, baia = $5, raca = $6, sexo = $7,
-               data_nascimento = $8::date, nome_pai = $9, nome_mae = $10,
-               pelagem = $11, categoria = $12, status = $13,
-               registro_associacao = $14, chip_resenha = $15,
-               alimentacao_diaria = $16, valor_mensalidade = $17
-           where id = $18 and tenant_id = $19 and excluido_em is null
-             and ($20::boolean or criado_por = $21)
+           set nome_proprietario = $1, proprietario_id = $2,
+               nome_treinador = $3, nome = $4, foto_url = $5, baia = $6,
+               raca = $7, sexo = $8, data_nascimento = $9::date,
+               nome_pai = $10, nome_mae = $11, pelagem = $12,
+               categoria = $13, status = $14, registro_associacao = $15,
+               chip_resenha = $16, alimentacao_diaria = $17, valor_mensalidade = $18
+           where id = $19 and tenant_id = $20 and excluido_em is null
+             and ($21::boolean or criado_por = $22)
            returning id`,
           [
-            fields.nome_proprietario,
+            owner.name,
+            owner.id,
             fields.nome_treinador,
             fields.nome,
             fields.foto_url,
@@ -838,7 +920,7 @@ export async function POST(request: Request) {
       }
 
       case "createClient": {
-        if ((user.perfil !== "ADMIN" && user.perfil !== "OPERACIONAL") || !hasTenant) {
+        if (!canManageClients) {
           return errorResponse("Ação permitida somente a usuários vinculados a um centro.", 403);
         }
         const validation = validateClientFields(body);
@@ -879,7 +961,7 @@ export async function POST(request: Request) {
       }
 
       case "updateClient": {
-        if ((user.perfil !== "ADMIN" && user.perfil !== "OPERACIONAL") || !hasTenant) {
+        if (!canManageClients) {
           return errorResponse("Ação permitida somente a usuários vinculados a um centro.", 403);
         }
         if (!isUuid(body.id)) {
@@ -918,7 +1000,7 @@ export async function POST(request: Request) {
             fields.data_fim,
             body.id,
             user.tenant_id,
-            user.perfil === "OPERACIONAL" ? user.id : null,
+            user.perfil === "ADMIN" ? null : user.id,
           ],
         );
         if (!result.rowCount) {

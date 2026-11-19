@@ -92,6 +92,15 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   Registros antigos sem autor identificado ficam visíveis somente ao ADMIN, que
   pode consultar, cadastrar, alterar e excluir clientes. O acesso operacional
   não inclui o financeiro; o plano CTE não habilita reprodução.
+- Usuários CLIENTE vinculados a um cadastro CTE ou Haras podem cadastrar cavalos
+  e clientes e consultar/alterar somente os registros que eles próprios criaram;
+  podem excluir somente seus cavalos. O proprietário de um cavalo deve ser um
+  cliente do mesmo login. ADMIN pode consultar os registros de todos os usuários
+  do tenant e acessar os módulos disponíveis para o plano.
+- Na consulta de clientes, ADMIN vê o vínculo CTE/Haras de cada cadastro. Usuários
+  CTE/Haras veem somente os clientes criados pelo próprio login e não recebem
+  essa coluna. A consulta, alteração e exclusão de cadastros CTE/Haras ficam
+  restritas ao perfil ADMIN.
 - O cadastro separado CTE/Haras usa os mesmos dados do formulário de clientes,
   exige a escolha do tipo e fica disponível somente para usuários ADMIN.
 - A conta inicial tem perfil `ADMIN`. `SUPER_ADMIN` é criado separadamente pelo

@@ -5,6 +5,7 @@ import { getPool, isDatabaseConfigured } from "@/lib/db";
 
 type HorseRecord = {
   id: string;
+  proprietario_id?: string | null;
   nome: string;
   baia: string | null;
   raca: string[];
@@ -50,6 +51,8 @@ type TenantRecord = {
 type BillingOwner = {
   id: string;
   nome: string;
+  cte_haras_nome?: string | null;
+  cte_haras_tipo?: "CTE" | "HARAS" | null;
   telefone_whatsapp: string | null;
   documento: string | null;
   cpf: string | null;
@@ -271,7 +274,7 @@ export default async function DashboardPage() {
   }
 
   if (user.perfil === "CLIENTE") {
-    if (!user.cadastro_cte_haras_id) {
+    if (!user.cadastro_cte_haras_id || !user.tipo_cadastro) {
       return (
         <SetupNotice
           title="Seu acesso ainda não está vinculado ao cadastro."
@@ -280,42 +283,55 @@ export default async function DashboardPage() {
       );
     }
 
-    const registrationResult = await pool.query<CteHarasRegistration>(
-      `select c.id, c.tipo_cadastro, c.nome, c.telefone_whatsapp, c.documento,
-              c.cpf, c.rg, c.data_nascimento::text as data_nascimento, c.idade,
-              c.profissao, c.endereco_completo, c.numero_socio_abccmm,
-              c.data_inicio::text as data_inicio, c.data_fim::text as data_fim,
-              u.email as login_email
-       from public.cadastros_cte_haras c
-       left join public.usuarios u
-         on u.cadastro_cte_haras_id = c.id and u.tenant_id = c.tenant_id
-       where c.id = $1 and c.tenant_id = $2
-       limit 1`,
-      [user.cadastro_cte_haras_id, user.tenant_id],
-    );
-    if (!registrationResult.rows[0]) {
-      return (
-        <SetupNotice
-          title="Cadastro não encontrado."
-          message="Peça ao administrador para conferir o vínculo do seu acesso."
-        />
-      );
-    }
+    const [horseResult, clientResult] = await Promise.all([
+      pool.query<HorseRecord>(
+        `select e.id, e.proprietario_id, e.nome, e.baia, e.raca, e.categoria, e.status,
+                  e.nome_pai, e.nome_mae,
+                  e.data_nascimento::text as data_nascimento,
+                  e.registro_associacao, e.sexo, e.pelagem, e.foto_url,
+                  e.nome_proprietario, e.nome_treinador,
+                  e.chip_resenha, e.alimentacao_diaria,
+                  e.valor_mensalidade::double precision as valor_mensalidade,
+                  e.created_at::text as created_at
+           from public.equinos as e
+           where e.tenant_id = $1 and e.criado_por = $2 and e.excluido_em is null
+           order by e.nome
+           limit 100`,
+        [user.tenant_id, user.id],
+      ),
+      pool.query<BillingOwner>(
+        `select id, nome, telefone_whatsapp, documento, cpf, rg,
+                  data_nascimento::text as data_nascimento, idade, profissao,
+                  endereco_completo, numero_socio_abccmm,
+                  data_inicio::text as data_inicio, data_fim::text as data_fim
+           from public.proprietarios
+           where tenant_id = $1 and criado_por = $2
+           order by nome`,
+        [user.tenant_id, user.id],
+      ),
+    ]);
 
     return (
       <Dashboard
         demo={false}
         role={user.perfil}
+        clientRegistrationType={user.tipo_cadastro}
         plan={user.plano}
         tenantName={user.tenant_nome}
-        horses={[]}
-        cteHarasRegistrations={registrationResult.rows}
+        horses={horseResult.rows}
+        clients={clientResult.rows.map((client) => ({
+          ...client,
+          numero_socio_abccmm:
+            client.numero_socio_abccmm === null
+              ? null
+              : Number(client.numero_socio_abccmm),
+        }))}
       />
     );
   }
 
   const tenantId = user.tenant_id;
-  const isManager = user.perfil !== "OPERACIONAL";
+  const isManager = user.perfil === "ADMIN";
   const clientsSelect = `select id, nome, telefone_whatsapp, documento, cpf, rg,
                                 data_nascimento::text as data_nascimento, idade, profissao,
                                 endereco_completo, numero_socio_abccmm,
@@ -324,9 +340,18 @@ export default async function DashboardPage() {
   const ownerResultQuery =
     user.perfil === "ADMIN"
       ? pool.query<BillingOwner>(
-          `${clientsSelect}
-           where tenant_id = $1
-           order by nome`,
+          `select p.id, p.nome, p.telefone_whatsapp, p.documento, p.cpf, p.rg,
+                  p.data_nascimento::text as data_nascimento, p.idade, p.profissao,
+                  p.endereco_completo, p.numero_socio_abccmm,
+                  p.data_inicio::text as data_inicio, p.data_fim::text as data_fim,
+                  c.nome as cte_haras_nome, c.tipo_cadastro as cte_haras_tipo
+           from public.proprietarios as p
+           left join public.usuarios as creator
+             on creator.id = p.criado_por and creator.tenant_id = p.tenant_id
+           left join public.cadastros_cte_haras as c
+             on c.id = creator.cadastro_cte_haras_id and c.tenant_id = p.tenant_id
+           where p.tenant_id = $1
+           order by p.nome`,
           [tenantId],
         )
       : pool.query<BillingOwner>(
@@ -375,7 +400,7 @@ export default async function DashboardPage() {
     cyclesResult,
   ] = await Promise.all([
     pool.query<HorseRecord>(
-      `select e.id, e.nome, e.baia, e.raca, e.categoria, e.status,
+      `select e.id, e.proprietario_id, e.nome, e.baia, e.raca, e.categoria, e.status,
               e.nome_pai, e.nome_mae,
               e.data_nascimento::text as data_nascimento,
               e.registro_associacao, e.sexo, e.pelagem, e.foto_url,
@@ -509,6 +534,7 @@ export default async function DashboardPage() {
     <Dashboard
       demo={false}
       role={user.perfil}
+      clientRegistrationType={user.tipo_cadastro}
       plan={user.plano}
       tenantName={user.tenant_nome}
       horses={horses}

@@ -6,6 +6,7 @@ export type CurrentUser = {
   id: string;
   tenant_id: string | null;
   cadastro_cte_haras_id: string | null;
+  tipo_cadastro: "CTE" | "HARAS" | null;
   nome: string;
   perfil: "SUPER_ADMIN" | "ADMIN" | "OPERACIONAL" | "CLIENTE";
   tenant_nome: string | null;
@@ -29,6 +30,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
        u.id,
        u.tenant_id,
        u.cadastro_cte_haras_id,
+       c.tipo_cadastro,
        u.nome,
        u.perfil,
        t.nome as tenant_nome,
@@ -36,6 +38,8 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
        t.status_assinatura
      from public.usuarios as u
      left join public.tenants as t on t.id = u.tenant_id
+     left join public.cadastros_cte_haras as c
+       on c.id = u.cadastro_cte_haras_id and c.tenant_id = u.tenant_id
      where u.id = $1
      limit 1`,
     [userId],
