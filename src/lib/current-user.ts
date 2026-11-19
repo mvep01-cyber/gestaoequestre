@@ -5,8 +5,9 @@ import { getPool, isDatabaseConfigured } from "@/lib/db";
 export type CurrentUser = {
   id: string;
   tenant_id: string | null;
+  cadastro_cte_haras_id: string | null;
   nome: string;
-  perfil: "SUPER_ADMIN" | "ADMIN" | "OPERACIONAL";
+  perfil: "SUPER_ADMIN" | "ADMIN" | "OPERACIONAL" | "CLIENTE";
   tenant_nome: string | null;
   plano: "CTE" | "HARAS" | null;
   status_assinatura: "TRIAL" | "ATIVO" | "BLOQUEADO" | null;
@@ -27,6 +28,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     `select
        u.id,
        u.tenant_id,
+       u.cadastro_cte_haras_id,
        u.nome,
        u.perfil,
        t.nome as tenant_nome,

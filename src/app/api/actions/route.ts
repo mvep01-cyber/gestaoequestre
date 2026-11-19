@@ -1,6 +1,7 @@
 import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
 import { getPool } from "@/lib/db";
 import { isSameOrigin } from "@/lib/request-security";
+import { hash } from "bcryptjs";
 
 type ReproductionCycle = {
   id: string;
@@ -1071,39 +1072,101 @@ export async function POST(request: Request) {
           return errorResponse(validation.message, 400);
         }
         const fields = validation.fields;
-        const result = await pool.query(
-          `insert into public.cadastros_cte_haras (
-             tenant_id, criado_por, tipo_cadastro, nome, telefone_whatsapp,
-             documento, cpf, rg, data_nascimento, idade, profissao,
-             endereco_completo, numero_socio_abccmm, data_inicio, data_fim
-           )
-           values (
-             $1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11,
-             $12, $13, $14::date, $15::date
-           )
-           returning id, tipo_cadastro, nome, telefone_whatsapp, documento, cpf, rg,
-             data_nascimento::text as data_nascimento, idade, profissao,
-             endereco_completo, numero_socio_abccmm,
-             data_inicio::text as data_inicio, data_fim::text as data_fim`,
-          [
-            user.tenant_id,
-            user.id,
-            body.tipo_cadastro,
-            fields.nome,
-            fields.telefone_whatsapp,
-            fields.documento,
-            fields.cpf,
-            fields.rg,
-            fields.data_nascimento,
-            fields.idade,
-            fields.profissao,
-            fields.endereco_completo,
-            fields.numero_socio_abccmm,
-            fields.data_inicio,
-            fields.data_fim,
-          ],
-        );
-        return Response.json({ registration: result.rows[0] }, { status: 201 });
+        const generateAccess = body.gerar_acesso === true;
+        let accessEmail: string | null = null;
+        let accessPasswordHash: string | null = null;
+        if (generateAccess) {
+          if (typeof body.login_email !== "string" || typeof body.login_senha !== "string") {
+            return errorResponse("Informe o e-mail e a senha do acesso.", 400);
+          }
+          accessEmail = body.login_email.trim().toLowerCase();
+          if (accessEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accessEmail)) {
+            return errorResponse("E-mail de acesso inválido.", 400);
+          }
+          if (body.login_senha.length < 12 || body.login_senha.length > 200) {
+            return errorResponse("A senha de acesso deve ter entre 12 e 200 caracteres.", 400);
+          }
+          accessPasswordHash = await hash(body.login_senha, 12);
+        }
+
+        const client = await pool.connect();
+        try {
+          await client.query("begin");
+          if (accessEmail) {
+            const existing = await client.query(
+              "select id from public.usuarios where lower(email) = $1",
+              [accessEmail],
+            );
+            if (existing.rowCount) {
+              await client.query("rollback");
+              return errorResponse("Já existe um usuário com esse e-mail.", 409);
+            }
+          }
+
+          const result = await client.query(
+            `insert into public.cadastros_cte_haras (
+               tenant_id, criado_por, tipo_cadastro, nome, telefone_whatsapp,
+               documento, cpf, rg, data_nascimento, idade, profissao,
+               endereco_completo, numero_socio_abccmm, data_inicio, data_fim
+             )
+             values (
+               $1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11,
+               $12, $13, $14::date, $15::date
+             )
+             returning id, tipo_cadastro, nome, telefone_whatsapp, documento, cpf, rg,
+               data_nascimento::text as data_nascimento, idade, profissao,
+               endereco_completo, numero_socio_abccmm,
+               data_inicio::text as data_inicio, data_fim::text as data_fim`,
+            [
+              user.tenant_id,
+              user.id,
+              body.tipo_cadastro,
+              fields.nome,
+              fields.telefone_whatsapp,
+              fields.documento,
+              fields.cpf,
+              fields.rg,
+              fields.data_nascimento,
+              fields.idade,
+              fields.profissao,
+              fields.endereco_completo,
+              fields.numero_socio_abccmm,
+              fields.data_inicio,
+              fields.data_fim,
+            ],
+          );
+          const registration = result.rows[0];
+
+          if (generateAccess && accessEmail && accessPasswordHash) {
+            await client.query(
+              `insert into public.usuarios (
+                 tenant_id, cadastro_cte_haras_id, nome, email, senha_hash, perfil
+               )
+               values ($1, $2, $3, $4, $5, 'CLIENTE')`,
+              [
+                user.tenant_id,
+                registration.id,
+                fields.nome,
+                accessEmail,
+                accessPasswordHash,
+              ],
+            );
+          }
+
+          await client.query("commit");
+          return Response.json(
+            {
+              registration: { ...registration, login_email: accessEmail },
+              accessCreated: generateAccess,
+            },
+            { status: 201 },
+          );
+        } catch (error) {
+          await client.query("rollback");
+          throw error;
+        } finally {
+          client.release();
+        }
       }
 
       case "updateCteHarasRegistration": {
@@ -1121,39 +1184,115 @@ export async function POST(request: Request) {
           return errorResponse(validation.message, 400);
         }
         const fields = validation.fields;
-        const result = await pool.query(
-          `update public.cadastros_cte_haras
-           set tipo_cadastro = $1, nome = $2, telefone_whatsapp = $3,
-               documento = $4, cpf = $5, rg = $6, data_nascimento = $7::date,
-               idade = $8, profissao = $9, endereco_completo = $10,
-               numero_socio_abccmm = $11, data_inicio = $12::date, data_fim = $13::date
-           where id = $14 and tenant_id = $15
-           returning id, tipo_cadastro, nome, telefone_whatsapp, documento, cpf, rg,
-             data_nascimento::text as data_nascimento, idade, profissao,
-             endereco_completo, numero_socio_abccmm,
-             data_inicio::text as data_inicio, data_fim::text as data_fim`,
-          [
-            body.tipo_cadastro,
-            fields.nome,
-            fields.telefone_whatsapp,
-            fields.documento,
-            fields.cpf,
-            fields.rg,
-            fields.data_nascimento,
-            fields.idade,
-            fields.profissao,
-            fields.endereco_completo,
-            fields.numero_socio_abccmm,
-            fields.data_inicio,
-            fields.data_fim,
-            body.id,
-            user.tenant_id,
-          ],
-        );
-        if (!result.rowCount) {
-          return errorResponse("Cadastro não encontrado para edição.", 404);
+        const generateAccess = body.gerar_acesso === true;
+        let accessEmail: string | null = null;
+        let accessPasswordHash: string | null = null;
+        if (generateAccess) {
+          if (typeof body.login_email !== "string" || typeof body.login_senha !== "string") {
+            return errorResponse("Informe o e-mail e a senha do acesso.", 400);
+          }
+          accessEmail = body.login_email.trim().toLowerCase();
+          if (accessEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accessEmail)) {
+            return errorResponse("E-mail de acesso inválido.", 400);
+          }
+          if (body.login_senha.length < 12 || body.login_senha.length > 200) {
+            return errorResponse("A senha de acesso deve ter entre 12 e 200 caracteres.", 400);
+          }
+          accessPasswordHash = await hash(body.login_senha, 12);
         }
-        return Response.json({ registration: result.rows[0] });
+
+        const client = await pool.connect();
+        try {
+          await client.query("begin");
+          const result = await client.query(
+            `update public.cadastros_cte_haras
+             set tipo_cadastro = $1, nome = $2, telefone_whatsapp = $3,
+                 documento = $4, cpf = $5, rg = $6, data_nascimento = $7::date,
+                 idade = $8, profissao = $9, endereco_completo = $10,
+                 numero_socio_abccmm = $11, data_inicio = $12::date, data_fim = $13::date
+             where id = $14 and tenant_id = $15
+             returning id, tipo_cadastro, nome, telefone_whatsapp, documento, cpf, rg,
+               data_nascimento::text as data_nascimento, idade, profissao,
+               endereco_completo, numero_socio_abccmm,
+               data_inicio::text as data_inicio, data_fim::text as data_fim`,
+            [
+              body.tipo_cadastro,
+              fields.nome,
+              fields.telefone_whatsapp,
+              fields.documento,
+              fields.cpf,
+              fields.rg,
+              fields.data_nascimento,
+              fields.idade,
+              fields.profissao,
+              fields.endereco_completo,
+              fields.numero_socio_abccmm,
+              fields.data_inicio,
+              fields.data_fim,
+              body.id,
+              user.tenant_id,
+            ],
+          );
+          if (!result.rowCount) {
+            await client.query("rollback");
+            return errorResponse("Cadastro não encontrado para edição.", 404);
+          }
+          const registration = result.rows[0];
+
+          if (generateAccess && accessEmail && accessPasswordHash) {
+            const existingAccess = await client.query(
+              `select id from public.usuarios
+               where cadastro_cte_haras_id = $1 and tenant_id = $2`,
+              [body.id, user.tenant_id],
+            );
+            const duplicate = await client.query(
+              `select id from public.usuarios
+               where lower(email) = $1
+                 and ($2::uuid is null or id <> $2)`,
+              [accessEmail, existingAccess.rows[0]?.id ?? null],
+            );
+            if (duplicate.rowCount) {
+              await client.query("rollback");
+              return errorResponse("Já existe um usuário com esse e-mail.", 409);
+            }
+
+            if (existingAccess.rowCount) {
+              await client.query(
+                `update public.usuarios
+                 set nome = $1, email = $2, senha_hash = $3, perfil = 'CLIENTE'
+                 where id = $4 and tenant_id = $5`,
+                [fields.nome, accessEmail, accessPasswordHash, existingAccess.rows[0].id, user.tenant_id],
+              );
+            } else {
+              await client.query(
+                `insert into public.usuarios (
+                   tenant_id, cadastro_cte_haras_id, nome, email, senha_hash, perfil
+                 )
+                 values ($1, $2, $3, $4, $5, 'CLIENTE')`,
+                [user.tenant_id, body.id, fields.nome, accessEmail, accessPasswordHash],
+              );
+            }
+          } else {
+            const existingAccess = await client.query(
+              `select email from public.usuarios
+               where cadastro_cte_haras_id = $1 and tenant_id = $2
+               limit 1`,
+              [body.id, user.tenant_id],
+            );
+            accessEmail = existingAccess.rows[0]?.email ?? null;
+          }
+
+          await client.query("commit");
+          return Response.json({
+            registration: { ...registration, login_email: accessEmail },
+            accessCreated: generateAccess,
+          });
+        } catch (error) {
+          await client.query("rollback");
+          throw error;
+        } finally {
+          client.release();
+        }
       }
 
       case "deleteCteHarasRegistration": {

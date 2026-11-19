@@ -65,6 +65,7 @@ type BillingOwner = {
 
 type CteHarasRegistration = BillingOwner & {
   tipo_cadastro: "CTE" | "HARAS";
+  login_email?: string | null;
 };
 
 type PixAccount = {
@@ -269,6 +270,50 @@ export default async function DashboardPage() {
     );
   }
 
+  if (user.perfil === "CLIENTE") {
+    if (!user.cadastro_cte_haras_id) {
+      return (
+        <SetupNotice
+          title="Seu acesso ainda não está vinculado ao cadastro."
+          message="Peça ao administrador para concluir a vinculação do seu CTE/Haras."
+        />
+      );
+    }
+
+    const registrationResult = await pool.query<CteHarasRegistration>(
+      `select c.id, c.tipo_cadastro, c.nome, c.telefone_whatsapp, c.documento,
+              c.cpf, c.rg, c.data_nascimento::text as data_nascimento, c.idade,
+              c.profissao, c.endereco_completo, c.numero_socio_abccmm,
+              c.data_inicio::text as data_inicio, c.data_fim::text as data_fim,
+              u.email as login_email
+       from public.cadastros_cte_haras c
+       left join public.usuarios u
+         on u.cadastro_cte_haras_id = c.id and u.tenant_id = c.tenant_id
+       where c.id = $1 and c.tenant_id = $2
+       limit 1`,
+      [user.cadastro_cte_haras_id, user.tenant_id],
+    );
+    if (!registrationResult.rows[0]) {
+      return (
+        <SetupNotice
+          title="Cadastro não encontrado."
+          message="Peça ao administrador para conferir o vínculo do seu acesso."
+        />
+      );
+    }
+
+    return (
+      <Dashboard
+        demo={false}
+        role={user.perfil}
+        plan={user.plano}
+        tenantName={user.tenant_nome}
+        horses={[]}
+        cteHarasRegistrations={registrationResult.rows}
+      />
+    );
+  }
+
   const tenantId = user.tenant_id;
   const isManager = user.perfil !== "OPERACIONAL";
   const clientsSelect = `select id, nome, telefone_whatsapp, documento, cpf, rg,
@@ -293,13 +338,16 @@ export default async function DashboardPage() {
   const cteHarasRegistrationsQuery =
     user.perfil === "ADMIN"
       ? pool.query<CteHarasRegistration>(
-          `select id, tipo_cadastro, nome, telefone_whatsapp, documento, cpf, rg,
-                  data_nascimento::text as data_nascimento, idade, profissao,
-                  endereco_completo, numero_socio_abccmm,
-                  data_inicio::text as data_inicio, data_fim::text as data_fim
-           from public.cadastros_cte_haras
-           where tenant_id = $1
-           order by nome`,
+          `select c.id, c.tipo_cadastro, c.nome, c.telefone_whatsapp, c.documento,
+                  c.cpf, c.rg, c.data_nascimento::text as data_nascimento, c.idade,
+                  c.profissao, c.endereco_completo, c.numero_socio_abccmm,
+                  c.data_inicio::text as data_inicio, c.data_fim::text as data_fim,
+                  u.email as login_email
+           from public.cadastros_cte_haras c
+           left join public.usuarios u
+             on u.cadastro_cte_haras_id = c.id and u.tenant_id = c.tenant_id
+           where c.tenant_id = $1
+           order by c.nome`,
           [tenantId],
         )
       : Promise.resolve({ rows: [] as CteHarasRegistration[] });

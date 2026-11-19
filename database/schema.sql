@@ -22,7 +22,7 @@ create table if not exists public.usuarios (
   tenant_id uuid references public.tenants (id) on delete cascade,
   nome text not null,
   telefone text,
-  perfil text not null check (perfil in ('SUPER_ADMIN', 'ADMIN', 'OPERACIONAL')),
+  perfil text not null check (perfil in ('SUPER_ADMIN', 'ADMIN', 'OPERACIONAL', 'CLIENTE')),
   percentual_comissao_padrao numeric(5, 2) not null default 0
     check (percentual_comissao_padrao between 0 and 100),
   check (
@@ -95,6 +95,95 @@ create table if not exists public.cadastros_cte_haras (
 
 create index if not exists cadastros_cte_haras_tenant_nome_idx
   on public.cadastros_cte_haras (tenant_id, nome);
+
+alter table if exists public.usuarios
+  add column if not exists cadastro_cte_haras_id uuid;
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'usuarios_perfil_check'
+      and conrelid = 'public.usuarios'::regclass
+  ) then
+    alter table public.usuarios drop constraint usuarios_perfil_check;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'usuarios_perfil_check'
+      and conrelid = 'public.usuarios'::regclass
+  ) then
+    alter table public.usuarios
+      add constraint usuarios_perfil_check
+      check (perfil in ('SUPER_ADMIN', 'ADMIN', 'OPERACIONAL', 'CLIENTE'));
+  end if;
+end
+$$;
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'usuarios_cadastro_cte_haras_tenant_fk'
+      and conrelid = 'public.usuarios'::regclass
+      and confdeltype <> 'c'
+  ) then
+    alter table public.usuarios
+      drop constraint usuarios_cadastro_cte_haras_tenant_fk;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'usuarios_cadastro_cte_haras_tenant_fk'
+      and conrelid = 'public.usuarios'::regclass
+  ) then
+    alter table public.usuarios
+      add constraint usuarios_cadastro_cte_haras_tenant_fk
+      foreign key (cadastro_cte_haras_id, tenant_id)
+      references public.cadastros_cte_haras (id, tenant_id)
+      on delete cascade;
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'usuarios_cadastro_cliente_link_check'
+      and conrelid = 'public.usuarios'::regclass
+  ) then
+    alter table public.usuarios
+      add constraint usuarios_cadastro_cliente_link_check check (
+        (perfil = 'CLIENTE' and cadastro_cte_haras_id is not null)
+        or (perfil <> 'CLIENTE' and cadastro_cte_haras_id is null)
+      );
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'usuarios_cadastro_cliente_check'
+      and conrelid = 'public.usuarios'::regclass
+  ) then
+    alter table public.usuarios
+      add constraint usuarios_cadastro_cliente_check check (
+        (perfil = 'SUPER_ADMIN' and tenant_id is null)
+        or (perfil <> 'SUPER_ADMIN' and tenant_id is not null)
+      );
+  end if;
+end
+$$;
 
 create table if not exists public.equinos (
   id uuid primary key default gen_random_uuid(),

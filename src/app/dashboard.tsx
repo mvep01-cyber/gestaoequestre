@@ -160,6 +160,7 @@ type ClientRecord = {
 
 type CteHarasRegistration = ClientRecord & {
   tipo_cadastro: "CTE" | "HARAS";
+  login_email?: string | null;
 };
 
 type DashboardProps = {
@@ -198,6 +199,9 @@ type ClientFormState = {
   data_inicio: string;
   data_fim: string;
   tipo_cadastro: "" | "CTE" | "HARAS";
+  gerar_acesso: boolean;
+  login_email: string;
+  login_senha: string;
 };
 
 const clientFormDefaults: ClientFormState = {
@@ -215,10 +219,27 @@ const clientFormDefaults: ClientFormState = {
   data_inicio: "",
   data_fim: "",
   tipo_cadastro: "",
+  gerar_acesso: false,
+  login_email: "",
+  login_senha: "",
 };
 
 function getClientFormError(form: ClientFormState): string | null {
-  const requiredFields: { key: keyof ClientFormState; label: string }[] = [
+  const requiredFields: {
+    key:
+      | "nome"
+      | "telefone_whatsapp"
+      | "documento"
+      | "cpf"
+      | "rg"
+      | "data_nascimento"
+      | "profissao"
+      | "endereco_completo"
+      | "numero_socio_abccmm"
+      | "data_inicio"
+      | "data_fim";
+    label: string;
+  }[] = [
     { key: "nome", label: "Nome do cliente" },
     { key: "telefone_whatsapp", label: "Telefone WhatsApp" },
     { key: "documento", label: "Documento" },
@@ -238,10 +259,20 @@ function getClientFormError(form: ClientFormState): string | null {
 }
 
 function getCteHarasFormError(form: ClientFormState): string | null {
-  return getClientFormError(form) ??
+  const baseError =
+    getClientFormError(form) ??
     (form.tipo_cadastro === "CTE" || form.tipo_cadastro === "HARAS"
       ? null
       : "Tipo do cadastro - Preenchimento Obrigatório.");
+  if (baseError) return baseError;
+  if (!form.gerar_acesso) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.login_email.trim())) {
+    return "E-mail de acesso - Preenchimento obrigatório ou inválido.";
+  }
+  if (form.login_senha.length < 12 || form.login_senha.length > 200) {
+    return "Senha de acesso - Informe entre 12 e 200 caracteres.";
+  }
+  return null;
 }
 
 function clientToForm(client: ClientRecord): ClientFormState {
@@ -261,6 +292,9 @@ function clientToForm(client: ClientRecord): ClientFormState {
     data_inicio: client.data_inicio ?? "",
     data_fim: client.data_fim ?? "",
     tipo_cadastro: "",
+    gerar_acesso: false,
+    login_email: "",
+    login_senha: "",
   };
 }
 
@@ -287,6 +321,9 @@ function cteHarasRegistrationToForm(registration: CteHarasRegistration): ClientF
   return {
     ...clientToForm(registration),
     tipo_cadastro: registration.tipo_cadastro,
+    gerar_acesso: false,
+    login_email: registration.login_email ?? "",
+    login_senha: "",
   };
 }
 
@@ -597,7 +634,7 @@ export function Dashboard({
 }: DashboardProps) {
   const router = useRouter();
   const [activeSection, setActiveSection] = useState<Section>(
-    role === "SUPER_ADMIN" ? "admin" : "home",
+    role === "SUPER_ADMIN" ? "admin" : role === "CLIENTE" ? "cteHarasRegistrations" : "home",
   );
   const [horses, setHorses] = useState(initialHorses);
   const [applications, setApplications] = useState(
@@ -656,12 +693,14 @@ export function Dashboard({
   const isHaras = plan === "HARAS";
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isAdmin = role === "ADMIN";
+  const isClient = role === "CLIENTE";
   const canManageHorses = isAdmin || isOperational;
 
   const visibleNav = useMemo(
     () =>
       navItems.filter((item) => {
         if (isSuperAdmin) return item.id === "admin";
+        if (isClient) return item.id === "cteHarasRegistrations";
         if (item.id === "cteHarasRegistrations") return isAdmin;
         if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || item.id === "finance" || item.id === "clients";
         if (item.id === "breeding") return isHaras && !isOperational;
@@ -669,7 +708,7 @@ export function Dashboard({
         if (item.id === "admin") return isSuperAdmin;
         return true;
       }),
-    [isAdmin, isHaras, isOperational, isSuperAdmin],
+    [isAdmin, isClient, isHaras, isOperational, isSuperAdmin],
   );
 
   const filteredHorses = useMemo(() => {
@@ -1318,6 +1357,9 @@ export function Dashboard({
         const result = await postDashboardAction("createCteHarasRegistration", {
           ...clientFieldsFromForm(clientForm),
           tipo_cadastro: tipoCadastro,
+          gerar_acesso: clientForm.gerar_acesso,
+          login_email: clientForm.login_email,
+          login_senha: clientForm.login_senha,
         });
         const registration = isRecord(result) ? result.registration : null;
         if (!isCteHarasRegistration(registration)) {
@@ -1371,7 +1413,12 @@ export function Dashboard({
       } else {
         const result = await postDashboardAction(
           "updateCteHarasRegistration",
-          updatedRegistration,
+          {
+            ...updatedRegistration,
+            gerar_acesso: clientForm.gerar_acesso,
+            login_email: clientForm.login_email,
+            login_senha: clientForm.login_senha,
+          },
         );
         const registration = isRecord(result) ? result.registration : null;
         if (!isCteHarasRegistration(registration)) {
@@ -1977,6 +2024,7 @@ export function Dashboard({
                   <th scope="col">Telefone</th>
                   <th scope="col">Data de início</th>
                   <th scope="col">Sócio ABCCMM</th>
+                  <th scope="col">Acesso</th>
                   <th scope="col">Ações</th>
                 </tr>
               </thead>
@@ -1988,6 +2036,7 @@ export function Dashboard({
                     <td>{registration.telefone_whatsapp || "—"}</td>
                     <td>{formatClientDate(registration.data_inicio)}</td>
                     <td>{registration.numero_socio_abccmm ?? "—"}</td>
+                    <td>{registration.login_email || "Não gerado"}</td>
                     <td>
                       <div className="client-row-actions">
                         {isAdmin && (
@@ -2742,6 +2791,54 @@ export function Dashboard({
                     <option value="CTE">CTE</option>
                     <option value="HARAS">Haras</option>
                   </select>
+                  <label className="checkbox-label" htmlFor="generate-client-access">
+                    <input
+                      id="generate-client-access"
+                      type="checkbox"
+                      checked={clientForm.gerar_acesso}
+                      onChange={(event) =>
+                        setClientForm({
+                          ...clientForm,
+                          gerar_acesso: event.target.checked,
+                        })
+                      }
+                    />
+                    Gerar login e senha para este CTE/Haras
+                  </label>
+                  {clientForm.gerar_acesso && (
+                    <>
+                      <label htmlFor="client-login-email">E-mail de acesso</label>
+                      <input
+                        id="client-login-email"
+                        type="email"
+                        autoComplete="email"
+                        required
+                        value={clientForm.login_email}
+                        onChange={(event) =>
+                          setClientForm({
+                            ...clientForm,
+                            login_email: event.target.value,
+                          })
+                        }
+                        placeholder="Ex.: cliente@exemplo.com"
+                      />
+                      <label htmlFor="client-login-password">Senha de acesso</label>
+                      <input
+                        id="client-login-password"
+                        type="password"
+                        autoComplete="new-password"
+                        required
+                        value={clientForm.login_senha}
+                        onChange={(event) =>
+                          setClientForm({
+                            ...clientForm,
+                            login_senha: event.target.value,
+                          })
+                        }
+                        placeholder="Mínimo de 12 caracteres"
+                      />
+                    </>
+                  )}
                 </>
               )}
               <label htmlFor="client-name">Nome do cliente</label>
