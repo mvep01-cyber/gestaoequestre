@@ -55,7 +55,9 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
    Localmente, o bootstrap usa `DATABASE_URL`, que precisa ter permissões
    `CREATEROLE` e `CREATEDB`. Em outros ambientes, configure
    `ADMIN_DATABASE_BOOTSTRAP_URL` com uma conexão temporária que tenha essas
-   permissões. A aplicação usa somente `ADMIN_DATABASE_URL` em runtime.
+   permissões. A aplicação usa somente `ADMIN_DATABASE_URL` em runtime. Execute
+   novamente após atualizações do esquema financeiro ADMIN; os novos campos são
+   adicionados sem alterar os lançamentos existentes.
 
 6. Preencha `INITIAL_ADMIN_NAME`, `INITIAL_ADMIN_EMAIL`,
    `INITIAL_ADMIN_PASSWORD` (mínimo de 12 caracteres), `INITIAL_TENANT_NAME` e
@@ -111,9 +113,14 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   cadastrado por esse login. Somente esse login pode consultar, alterar, baixar
   ou excluir seu lançamento; o perfil ADMIN não acessa os lançamentos
   financeiros CTE/Haras.
-- O Financeiro ADMIN oferece cadastro de contas e lançamentos, baixa e exclusão
-  auditadas, filtros por competência, vencimento, natureza, categoria, status,
-  CTE/Haras e plano, resumo dos resultados e exportação CSV.
+- O Financeiro ADMIN apresenta apenas os lançamentos do próprio login, com
+  alteração e exclusão auditadas, filtros, resumo e exportação CSV.
+- No novo lançamento ADMIN, a descrição tem até 30 caracteres, o valor deve
+  ser positivo e o campo Conta aceita texto livre de até 20 caracteres. O
+  CTE/Haras é escolhido entre cadastros feitos por ADMIN em todos os centros ou
+  pela opção Administrador. A data de pagamento marca o lançamento como pago
+  sem movimentar saldo. Pagamentos anteriores vinculados a contas preservam seu
+  histórico; desfazê-los pode estornar o saldo associado.
 - As rotas de comprovantes CTE/Haras validam o acesso pelo servidor. A interface
   operacional ainda não oferece todos os filtros e ações previstos na especificação.
 - O perfil ADMIN existente tem acesso global às funções operacionais: selecione

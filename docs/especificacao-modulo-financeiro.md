@@ -82,8 +82,16 @@ Mensalidades, parcelas, comissões ou cobranças geradas a partir de outras oper
 - Exibir totais e relatórios da plataforma por período, categoria, tenant/plano e status.
 - Registrar contas e meios de recebimento/pagamento próprios da plataforma.
 - Restringir criação, alteração, baixa, exclusão, exportação e consulta ao perfil `ADMIN` existente.
+- No Financeiro ADMIN, cada login consulta, altera e exclui somente os lançamentos que criou.
 - Manter este módulo e seus relatórios separados do Financeiro CTE/Haras. A base e os relatórios ADMIN contêm somente as contas da plataforma.
 - Manter trilha de auditoria para alterações financeiras e ações administrativas.
+- Na inclusão, limitar descrição a 30 caracteres e aceitar somente valor positivo.
+  Selecionar CTE/Haras dentre os cadastros criados por ADMIN em qualquer centro
+  ou a opção Administrador. Conta é texto livre opcional de até 20 caracteres.
+  A data de pagamento marca o lançamento como pago sem movimentar saldo.
+  Pagamentos anteriores vinculados a contas mantêm seus efeitos históricos;
+  removê-los ou desfazê-los pode estornar o saldo. Preservar os vínculos e
+  descrições dos lançamentos anteriores.
 
 ## 6. Requisitos de segurança e integridade
 
@@ -117,7 +125,7 @@ A implementação inicial está aplicada no ambiente local:
 - O Financeiro ADMIN usa `ADMIN_DATABASE_URL`, uma base PostgreSQL local separada, com contas, lançamentos, saldos e auditoria próprios.
 - O perfil `ADMIN` existente opera globalmente, selecionando no painel o tenant para as funções operacionais. Essa seleção não permite consultar ou alterar o Financeiro CTE/Haras.
 - Rotas de comprovantes validam a propriedade do lançamento para logins CTE/Haras; o ADMIN não recebe acesso a esses comprovantes.
-- O Financeiro ADMIN oferece cadastro de contas e lançamentos, alteração, baixa, exclusão lógica, filtros por competência, vencimento, natureza, categoria, status, CTE/Haras e plano, resumo dos valores filtrados e exportação CSV.
+- O Financeiro ADMIN oferece contas e lançamentos do próprio login, data de pagamento, alteração, exclusão lógica, filtros, resumo dos valores e exportação CSV.
 - As rotas de comprovantes em PDF ou imagem validam o acesso do login CTE/Haras ao próprio lançamento; a interface operacional de anexos ainda precisa ser restaurada.
 - `npm run db:setup` e `npm run db:admin-setup` aplicam os esquemas locais. Testes integrados locais cobriram isolamento entre logins, validação do cliente, acesso global ADMIN e separação das bases.
 

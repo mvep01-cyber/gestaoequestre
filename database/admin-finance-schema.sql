@@ -36,6 +36,12 @@ create table if not exists public.lancamentos_financeiro_admin (
          (tenant_id is not null and tenant_nome is not null))
 );
 
+alter table public.lancamentos_financeiro_admin
+  add column if not exists cadastro_cte_haras_id uuid,
+  add column if not exists cadastro_cte_haras_nome text,
+  add column if not exists cadastro_cte_haras_tipo text,
+  add column if not exists conta_informada text;
+
 create index if not exists lancamentos_admin_status_vencimento_idx
   on public.lancamentos_financeiro_admin (status, data_vencimento)
   where excluido_em is null;

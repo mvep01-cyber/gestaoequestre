@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { Dashboard } from "@/app/dashboard";
-import type { AdminFinanceEntry } from "@/app/admin-finance";
+import type { AdminFinanceEntry, AdminFinanceRegistration } from "@/app/admin-finance";
 import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
 import {
   getAdminFinancePool,
@@ -438,6 +438,15 @@ export default async function DashboardPage({
   const adminFinancePool = adminFinanceConfigured
     ? getAdminFinancePool()
     : null;
+  const adminFinanceNeedsMigration = adminFinancePool
+    ? Number((await adminFinancePool.query<{ count: string }>(
+        `select count(*)::text as count
+         from information_schema.columns
+         where table_schema = 'public' and table_name = 'lancamentos_financeiro_admin'
+           and column_name in ('cadastro_cte_haras_id', 'cadastro_cte_haras_nome',
+                               'cadastro_cte_haras_tipo', 'conta_informada')`,
+      )).rows[0].count) !== 4
+    : false;
   const clientsSelect = `select id, nome, telefone_whatsapp, documento, cpf, rg,
                                 data_nascimento::text as data_nascimento, idade, profissao,
                                 endereco_completo, numero_socio_abccmm,
@@ -499,6 +508,7 @@ export default async function DashboardPage({
     trainingsResult,
     ownerResult,
     cteHarasRegistrationsResult,
+    adminFinanceRegistrationsResult,
     accountResult,
     financeCountResult,
     financeResult,
@@ -576,6 +586,16 @@ export default async function DashboardPage({
     ),
     ownerResultQuery,
     cteHarasRegistrationsQuery,
+    adminFinancePool
+      ? pool.query<AdminFinanceRegistration>(
+          `select c.id, c.nome, c.tipo_cadastro, c.tenant_id, t.nome as tenant_nome
+           from public.cadastros_cte_haras as c
+           join public.usuarios as creator on creator.id = c.criado_por and creator.perfil = 'ADMIN'
+           join public.tenants as t on t.id = c.tenant_id
+           where c.tipo_cadastro in ('CTE', 'HARAS')
+           order by c.nome, c.id`,
+        )
+      : Promise.resolve({ rows: [] as AdminFinanceRegistration[] }),
     isManager
       ? adminFinancePool
         ? adminFinancePool.query<PixAccount>(
@@ -591,22 +611,27 @@ export default async function DashboardPage({
         ? adminFinancePool.query<{ count: string }>(
             `select count(*)::text as count
              from public.lancamentos_financeiro_admin
-             where excluido_em is null and status in ('PENDENTE', 'ATRASADO')`,
+             where criado_por = $1 and excluido_em is null and status in ('PENDENTE', 'ATRASADO')`,
+            [user.id],
           )
         : Promise.resolve({ rows: [{ count: "0" }] })
       : Promise.resolve({ rows: [{ count: "0" }] }),
     isManager
       ? adminFinancePool
-        ? adminFinancePool.query<AdminFinanceEntry>(
-            `select id, conta_id, tenant_id, tenant_nome, plano, descricao,
+        ? !adminFinanceNeedsMigration
+          ? adminFinancePool.query<AdminFinanceEntry>(
+            `select id, conta_id, conta_informada, tenant_id, tenant_nome, plano,
+                    cadastro_cte_haras_id, cadastro_cte_haras_nome, cadastro_cte_haras_tipo, descricao,
                     valor::double precision as valor,
                     data_vencimento::text as data_vencimento,
                     data_pagamento::text as data_pagamento,
                     competencia::text as competencia, natureza, categoria, status
              from public.lancamentos_financeiro_admin
-             where excluido_em is null
+             where criado_por = $1 and excluido_em is null
              order by data_vencimento, criado_em desc`,
+            [user.id],
           )
+          : Promise.resolve({ rows: [] as AdminFinanceEntry[] })
         : Promise.resolve({ rows: [] as AdminFinanceEntry[] })
       : Promise.resolve({ rows: [] as AdminFinanceEntry[] }),
     tenantPlan === "HARAS" && isManager
@@ -664,7 +689,9 @@ export default async function DashboardPage({
       todayTrainingCount={Number(trainingCountResult.rows[0]?.count ?? 0)}
       pendingFinanceCount={Number(financeCountResult.rows[0]?.count ?? 0)}
       adminFinanceConfigured={adminFinanceConfigured}
+      adminFinanceNeedsMigration={adminFinanceNeedsMigration}
       adminFinanceEntries={financeResult.rows}
+      adminFinanceRegistrations={adminFinanceRegistrationsResult.rows}
       breedingCount={Number(cycleCountResult.rows[0]?.count ?? 0)}
       billingOwners={isManager ? ownerResult.rows : []}
       pixAccounts={accountResult.rows.map((row) => ({

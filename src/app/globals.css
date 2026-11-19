@@ -1335,6 +1335,11 @@ input:focus-visible {
   gap: 20px;
 }
 
+.admin-finance-table-wrap {
+  max-height: 420px;
+  overflow: auto;
+}
+
 .admin-finance-actions,
 .admin-finance-summary {
   display: flex;

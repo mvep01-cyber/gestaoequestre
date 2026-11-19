@@ -29,7 +29,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 import { signOut } from "next-auth/react";
 import { CteHarasRegistrations, type CteHarasRegistration } from "./cte-haras-registrations";
-import { AdminFinance, type AdminFinanceEntry } from "./admin-finance";
+import { AdminFinance, type AdminFinanceEntry, type AdminFinanceRegistration } from "./admin-finance";
 
 type HorseRecord = {
   id: string;
@@ -163,7 +163,9 @@ type DashboardProps = {
   globalAdmin?: boolean;
   selectedTenantId?: string;
   adminFinanceConfigured?: boolean;
+  adminFinanceNeedsMigration?: boolean;
   adminFinanceEntries?: AdminFinanceEntry[];
+  adminFinanceRegistrations?: AdminFinanceRegistration[];
   plan: string;
   tenantName: string;
   horses: HorseRecord[];
@@ -491,7 +493,9 @@ export function Dashboard({
   cteHarasRegistrations = [],
   selectedTenantId,
   adminFinanceConfigured = false,
+  adminFinanceNeedsMigration = false,
   adminFinanceEntries = [],
+  adminFinanceRegistrations = [],
 }: DashboardProps) {
   const router = useRouter();
   const [activeSection, setActiveSection] = useState<Section>(
@@ -1924,10 +1928,12 @@ export function Dashboard({
         return isAdmin ? (
           <AdminFinance
             configured={adminFinanceConfigured}
+            needsMigration={adminFinanceNeedsMigration}
             demo={demo}
             entries={adminFinanceEntries}
             accounts={pixAccounts}
             tenants={managedTenants}
+            registrations={adminFinanceRegistrations}
           />
         ) : renderFinance();
       case "admin":

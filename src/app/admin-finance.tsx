@@ -7,9 +7,13 @@ import { Plus, Wallet, X } from "lucide-react";
 export type AdminFinanceEntry = {
   id: string;
   conta_id: string | null;
+  conta_informada: string | null;
   tenant_id: string | null;
   tenant_nome: string | null;
   plano: string | null;
+  cadastro_cte_haras_id: string | null;
+  cadastro_cte_haras_nome: string | null;
+  cadastro_cte_haras_tipo: string | null;
   descricao: string;
   valor: number;
   competencia: string | null;
@@ -22,6 +26,13 @@ export type AdminFinanceEntry = {
 
 type Account = { id: string; nome: string; saldo_atual: number };
 type Tenant = { id: string; nome: string; plano: string };
+export type AdminFinanceRegistration = {
+  id: string;
+  nome: string;
+  tipo_cadastro: "CTE" | "HARAS";
+  tenant_id: string;
+  tenant_nome: string;
+};
 type EntryForm = {
   id: string;
   description: string;
@@ -29,9 +40,14 @@ type EntryForm = {
   nature: "RECEITA" | "DESPESA";
   category: string;
   tenantId: string;
+  registrationId: string;
+  registrationLabel: string;
   accountId: string;
+  accountText: string;
   competence: string;
   dueDate: string;
+  paymentDate: string;
+  status: string;
 };
 
 const emptyEntry: EntryForm = {
@@ -41,9 +57,14 @@ const emptyEntry: EntryForm = {
   nature: "RECEITA",
   category: "ASSINATURA",
   tenantId: "",
+  registrationId: "",
+  registrationLabel: "",
   accountId: "",
+  accountText: "",
   competence: "",
   dueDate: "",
+  paymentDate: "",
+  status: "PENDENTE",
 };
 
 const categoryLabels: Record<string, string> = {
@@ -94,16 +115,20 @@ function csvCell(value: string | number | null) {
 
 export function AdminFinance({
   configured,
+  needsMigration,
   demo,
   entries,
   accounts,
   tenants,
+  registrations,
 }: {
   configured: boolean;
+  needsMigration: boolean;
   demo: boolean;
   entries: AdminFinanceEntry[];
   accounts: Account[];
   tenants: Tenant[];
+  registrations: AdminFinanceRegistration[];
 }) {
   const router = useRouter();
   const [competence, setCompetence] = useState("");
@@ -119,10 +144,9 @@ export function AdminFinance({
   const [accountName, setAccountName] = useState("");
   const [accountType, setAccountType] = useState("CONTA_CORRENTE");
   const [pixKey, setPixKey] = useState("");
-  const [paymentAccounts, setPaymentAccounts] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState("");
   const [saving, setSaving] = useState(false);
-  const available = configured && !demo;
+  const available = configured && !needsMigration && !demo;
 
   const filtered = useMemo(() => entries.filter((entry) =>
     (!competence || entry.competencia?.slice(0, 7) === competence) &&
@@ -131,7 +155,9 @@ export function AdminFinance({
     (!nature || entry.natureza === nature) &&
     (!category || entry.categoria === category) &&
     (!status || entry.status === status) &&
-    (!tenantId || entry.tenant_id === tenantId) &&
+    (!tenantId || (tenantId === "ADMINISTRADOR"
+      ? !entry.cadastro_cte_haras_id && !entry.tenant_id && entry.cadastro_cte_haras_nome === "Administrador"
+      : entry.tenant_id === tenantId)) &&
     (!plan || entry.plano === plan),
   ), [entries, competence, dueFrom, dueTo, nature, category, status, tenantId, plan]);
 
@@ -154,10 +180,13 @@ export function AdminFinance({
         amount: entryForm.amount,
         nature: entryForm.nature,
         category: entryForm.category,
-        tenantId: entryForm.tenantId || null,
+        tenantId: entryForm.registrationId ? null : entryForm.tenantId || null,
+        registrationId: entryForm.registrationId || null,
         accountId: entryForm.accountId || null,
+        accountText: entryForm.accountText,
         competence: entryForm.competence ? `${entryForm.competence}-01` : null,
         dueDate: entryForm.dueDate,
+        paymentDate: entryForm.paymentDate || null,
       });
       if (!isRecord(result.entry) || typeof result.entry.id !== "string") {
         throw new Error("O servidor não confirmou o lançamento.");
@@ -201,30 +230,8 @@ export function AdminFinance({
     }
   }
 
-  async function pay(entry: AdminFinanceEntry) {
-    const accountId = paymentAccounts[entry.id] ?? entry.conta_id;
-    if (!accountId) {
-      setFeedback("Selecione uma conta financeira para dar baixa.");
-      return;
-    }
-    if (!window.confirm(`Registrar o pagamento de "${entry.descricao}"?`)) return;
-    setSaving(true);
-    setFeedback("");
-    try {
-      const result = await postFinanceAction("payEntry", { id: entry.id, accountId });
-      if (result.updated !== true) throw new Error("O servidor não confirmou a baixa.");
-      setFeedback("Baixa registrada e saldo atualizado.");
-      router.refresh();
-    } catch (error) {
-      console.error("Falha ao dar baixa no lançamento ADMIN:", error);
-      setFeedback(error instanceof Error ? error.message : "Não foi possível registrar a baixa.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function remove(entry: AdminFinanceEntry) {
-    if (!window.confirm(`Excluir "${entry.descricao}"? A exclusão será registrada${entry.status === "PAGO" ? " e o efeito no saldo será estornado" : ""}.`)) return;
+    if (!window.confirm(`Excluir "${entry.descricao}"? A exclusão será registrada${entry.status === "PAGO" && entry.conta_id ? " e o efeito no saldo será estornado" : ""}.`)) return;
     setSaving(true);
     setFeedback("");
     try {
@@ -246,7 +253,8 @@ export function AdminFinance({
       ...filtered.map((entry) => [
         entry.descricao, entry.natureza, categoryLabels[entry.categoria] ?? entry.categoria,
         entry.valor.toFixed(2).replace(".", ","), entry.competencia, entry.data_vencimento,
-        entry.data_pagamento, statusLabels[entry.status] ?? entry.status, entry.tenant_nome, entry.plano,
+        entry.data_pagamento, statusLabels[entry.status] ?? entry.status,
+        entry.cadastro_cte_haras_nome ?? entry.tenant_nome, entry.plano,
       ]),
     ];
     const blob = new Blob(["\uFEFF", rows.map((row) => row.map(csvCell).join(";")).join("\r\n")], { type: "text/csv;charset=utf-8" });
@@ -262,7 +270,11 @@ export function AdminFinance({
     return (
       <section className="panel module-panel">
         <h2>Financeiro ADMIN</h2>
-        <p>{demo ? "O financeiro da plataforma não está disponível no modo de demonstração." : "A base financeira ADMIN não está configurada. Configure a conexão e execute a preparação da base."}</p>
+        <p>{demo
+          ? "O financeiro da plataforma não está disponível no modo de demonstração."
+          : needsMigration
+            ? "A base financeira ADMIN precisa ser atualizada. Execute npm run db:admin-setup."
+            : "A base financeira ADMIN não está configurada. Configure a conexão e execute a preparação da base."}</p>
       </section>
     );
   }
@@ -287,7 +299,7 @@ export function AdminFinance({
           <label>Natureza<select value={nature} onChange={(event) => setNature(event.target.value)}><option value="">Todas</option><option value="RECEITA">Receita</option><option value="DESPESA">Despesa</option></select></label>
           <label>Categoria<select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">Todas</option>{Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Todos</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          <label>CTE/Haras<select value={tenantId} onChange={(event) => setTenantId(event.target.value)}><option value="">Todos</option>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.nome}</option>)}</select></label>
+          <label>CTE/Haras<select value={tenantId} onChange={(event) => setTenantId(event.target.value)}><option value="">Todos</option><option value="ADMINISTRADOR">Administrador</option>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.nome}</option>)}</select></label>
           <label>Plano<select value={plan} onChange={(event) => setPlan(event.target.value)}><option value="">Todos</option><option value="CTE">CTE</option><option value="HARAS">Haras</option></select></label>
         </div>
         {dueFrom && dueTo && dueFrom > dueTo && <p className="client-form-error" role="alert">O vencimento inicial não pode ser posterior ao final.</p>}
@@ -309,26 +321,33 @@ export function AdminFinance({
       <section className="panel module-panel">
         <h2>Lançamentos ({filtered.length})</h2>
         {filtered.length === 0 ? <p>Nenhum lançamento encontrado para os filtros.</p> : (
-          <div className="client-table-wrap">
+          <div className="client-table-wrap admin-finance-table-wrap" role="region" aria-label="Lista de lançamentos" tabIndex={0}>
             <table className="client-table">
-              <thead><tr><th>Descrição</th><th>Natureza / categoria</th><th>Valor</th><th>Competência</th><th>Vencimento</th><th>Pagamento</th><th>Status</th><th>CTE/Haras / plano</th><th>Ações</th></tr></thead>
+              <thead><tr><th>Descrição</th><th>Natureza / categoria</th><th>Valor</th><th>Competência</th><th>Vencimento</th><th>Pagamento</th><th>Status</th><th>CTE/Haras / plano</th><th>Conta informada</th><th>Ações</th></tr></thead>
               <tbody>{filtered.map((entry) => (
                 <tr key={entry.id}>
                   <td>{entry.descricao}</td><td>{entry.natureza === "RECEITA" ? "Receita" : "Despesa"} / {categoryLabels[entry.categoria] ?? entry.categoria}</td>
                   <td>{currency.format(entry.valor)}</td><td>{entry.competencia ? entry.competencia.slice(0, 7).split("-").reverse().join("/") : "—"}</td>
                   <td>{formatDate(entry.data_vencimento)}</td><td>{formatDate(entry.data_pagamento)}</td><td>{statusLabels[entry.status] ?? entry.status}</td>
-                  <td>{entry.tenant_nome ? `${entry.tenant_nome} / ${entry.plano}` : "—"}</td>
+                  <td>{entry.cadastro_cte_haras_nome
+                    ? `${entry.cadastro_cte_haras_nome}${entry.cadastro_cte_haras_tipo ? ` / ${entry.cadastro_cte_haras_tipo}` : ""}`
+                    : entry.tenant_nome ? `${entry.tenant_nome} / ${entry.plano}` : "—"}</td>
+                  <td>{entry.conta_informada || "—"}</td>
                   <td><div className="client-row-actions">
                     <button className="button button-secondary" disabled={saving} onClick={() => {
                       setFeedback("");
-                      setEntryForm({ id: entry.id, description: entry.descricao, amount: String(entry.valor), nature: entry.natureza === "DESPESA" ? "DESPESA" : "RECEITA", category: entry.categoria, tenantId: entry.tenant_id ?? "", accountId: entry.conta_id ?? "", competence: entry.competencia?.slice(0, 7) ?? "", dueDate: entry.data_vencimento });
+                      setEntryForm({
+                        id: entry.id, description: entry.descricao, amount: String(entry.valor),
+                        nature: entry.natureza === "DESPESA" ? "DESPESA" : "RECEITA",
+                        category: entry.categoria, tenantId: entry.cadastro_cte_haras_id ? "" : entry.tenant_id ?? "",
+                        registrationId: entry.cadastro_cte_haras_id ??
+                          (!entry.tenant_id && entry.cadastro_cte_haras_nome === "Administrador" ? "ADMINISTRADOR" : ""),
+                        registrationLabel: entry.cadastro_cte_haras_nome ?? entry.tenant_nome ?? "",
+                        accountId: entry.conta_id ?? "", accountText: entry.conta_informada ?? "",
+                        competence: entry.competencia?.slice(0, 7) ?? "", dueDate: entry.data_vencimento,
+                        paymentDate: entry.data_pagamento ?? "", status: entry.status,
+                      });
                     }}>Alterar</button>
-                    {(entry.status === "PENDENTE" || entry.status === "ATRASADO") && (
-                      <>
-                        <label><span className="sr-only">Conta para baixa de {entry.descricao}</span><select value={paymentAccounts[entry.id] ?? entry.conta_id ?? ""} onChange={(event) => setPaymentAccounts({ ...paymentAccounts, [entry.id]: event.target.value })}><option value="">Conta para baixa</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.nome}</option>)}</select></label>
-                        <button className="button button-complete" disabled={saving} onClick={() => void pay(entry)}>Baixar</button>
-                      </>
-                    )}
                     <button className="button button-quiet" disabled={saving} onClick={() => void remove(entry)}>Excluir</button>
                   </div></td>
                 </tr>
@@ -343,14 +362,29 @@ export function AdminFinance({
           <section className="modal-card client-modal-card" role="dialog" aria-modal="true" aria-labelledby="admin-entry-title">
             <div className="modal-heading"><h2 id="admin-entry-title">{entryForm.id ? "Alterar lançamento" : "Novo lançamento"}</h2><button className="icon-button" aria-label="Fechar" disabled={saving} onClick={() => setEntryForm(null)}><X size={22} /></button></div>
             <form className="client-form" onSubmit={(event) => void saveEntry(event)}>
-              <label htmlFor="admin-entry-description">Descrição</label><input id="admin-entry-description" required maxLength={200} value={entryForm.description} onChange={(event) => setEntryForm({ ...entryForm, description: event.target.value })} />
+              <label htmlFor="admin-entry-description">Descrição</label><input id="admin-entry-description" required maxLength={entryForm.id ? 200 : 30} value={entryForm.description} onChange={(event) => setEntryForm({ ...entryForm, description: event.target.value })} />
               <label htmlFor="admin-entry-nature">Natureza</label><select id="admin-entry-nature" value={entryForm.nature} onChange={(event) => setEntryForm({ ...entryForm, nature: event.target.value === "DESPESA" ? "DESPESA" : "RECEITA" })}><option value="RECEITA">Receita</option><option value="DESPESA">Despesa</option></select>
               <label htmlFor="admin-entry-category">Categoria</label><select id="admin-entry-category" value={entryForm.category} onChange={(event) => setEntryForm({ ...entryForm, category: event.target.value })}>{Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
               <label htmlFor="admin-entry-amount">Valor (R$)</label><input id="admin-entry-amount" type="number" min="0.01" max="9999999999.99" step="0.01" required value={entryForm.amount} onChange={(event) => setEntryForm({ ...entryForm, amount: event.target.value })} />
-              <label className={entryForm.category !== "ASSINATURA" ? "optional-field" : undefined} htmlFor="admin-entry-tenant">CTE/Haras {entryForm.category !== "ASSINATURA" && "(opcional)"}</label><select id="admin-entry-tenant" required={entryForm.category === "ASSINATURA"} value={entryForm.tenantId} onChange={(event) => setEntryForm({ ...entryForm, tenantId: event.target.value })}><option value="">Selecione</option>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.nome} — {tenant.plano}</option>)}</select>
+              <label className={entryForm.category !== "ASSINATURA" ? "optional-field" : undefined} htmlFor="admin-entry-tenant">CTE/Haras {entryForm.category !== "ASSINATURA" && "(opcional)"}</label>
+              <select id="admin-entry-tenant" required={entryForm.category === "ASSINATURA"}
+                value={entryForm.registrationId || (entryForm.tenantId ? `tenant:${entryForm.tenantId}` : "")}
+                onChange={(event) => setEntryForm({ ...entryForm,
+                  registrationId: event.target.value.startsWith("tenant:") ? "" : event.target.value,
+                  tenantId: event.target.value.startsWith("tenant:") ? event.target.value.slice(7) : "",
+                })}>
+                <option value="">Selecione</option>
+                <option value="ADMINISTRADOR">Administrador</option>
+                {entryForm.tenantId && <option value={`tenant:${entryForm.tenantId}`}>{entryForm.registrationLabel} — centro anterior</option>}
+                {entryForm.registrationId && entryForm.registrationId !== "ADMINISTRADOR" && !registrations.some((registration) => registration.id === entryForm.registrationId) &&
+                  <option value={entryForm.registrationId}>{entryForm.registrationLabel} — cadastro indisponível</option>}
+                {registrations.map((registration) => <option key={registration.id} value={registration.id}>{registration.nome} — {registration.tipo_cadastro} ({registration.tenant_nome})</option>)}
+              </select>
               <label className="optional-field" htmlFor="admin-entry-competence">Competência (opcional)</label><input id="admin-entry-competence" type="month" value={entryForm.competence} onChange={(event) => setEntryForm({ ...entryForm, competence: event.target.value })} />
               <label htmlFor="admin-entry-due">Vencimento</label><input id="admin-entry-due" type="date" required value={entryForm.dueDate} onChange={(event) => setEntryForm({ ...entryForm, dueDate: event.target.value })} />
-              <label className="optional-field" htmlFor="admin-entry-account">Conta financeira (opcional)</label><select id="admin-entry-account" value={entryForm.accountId} onChange={(event) => setEntryForm({ ...entryForm, accountId: event.target.value })}><option value="">Selecione</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.nome}</option>)}</select>
+              <label className="optional-field" htmlFor="admin-entry-payment">Data de pagamento (opcional)</label><input id="admin-entry-payment" type="date" disabled={entryForm.status === "CANCELADO"} value={entryForm.paymentDate} onChange={(event) => setEntryForm({ ...entryForm, paymentDate: event.target.value })} />
+              {entryForm.status === "PAGO" && entryForm.accountId && <p>Este pagamento anterior afetou o saldo de uma conta; remover a data estornará esse efeito.</p>}
+              <label className="optional-field" htmlFor="admin-entry-account-text">Conta (opcional)</label><input id="admin-entry-account-text" maxLength={20} value={entryForm.accountText} onChange={(event) => setEntryForm({ ...entryForm, accountText: event.target.value })} />
               {feedback && <p className="client-form-error" role="alert">{feedback}</p>}
               <div className="modal-actions"><button type="button" className="button button-quiet" disabled={saving} onClick={() => setEntryForm(null)}>Cancelar</button><button className="button button-primary" disabled={saving}>{saving ? "Salvando..." : "Salvar lançamento"}</button></div>
             </form>
