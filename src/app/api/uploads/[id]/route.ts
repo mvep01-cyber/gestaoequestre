@@ -8,9 +8,16 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const user = await getCurrentUser();
-  if (!user || !user.tenant_id || !isTenantAvailable(user)) {
+  if (
+    !user ||
+    (user.perfil !== "ADMIN" && !user.tenant_id) ||
+    !isTenantAvailable(user)
+  ) {
     return Response.json({ error: "Não autorizado." }, { status: 401 });
   }
+  const isClientAccount =
+    user.perfil === "CLIENTE" &&
+    (user.tipo_cadastro === "CTE" || user.tipo_cadastro === "HARAS");
 
   const { id } = await context.params;
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
@@ -22,24 +29,44 @@ export async function GET(
     nome_original: string;
     mime_type: string;
     tipo: string;
+    tenant_id: string;
     equino_id: string | null;
+    lancamento_id: string | null;
   }>(
-    `select caminho, nome_original, mime_type, tipo, equino_id
+    `select caminho, nome_original, mime_type, tipo, tenant_id, equino_id, lancamento_id
      from public.arquivos
-     where id = $1 and tenant_id = $2`,
-    [id, user.tenant_id],
+     where id = $1 and ($2::uuid is null or tenant_id = $2)`,
+    [id, user.perfil === "ADMIN" ? null : user.tenant_id],
   );
   const fileRecord = result.rows[0];
-  if (!fileRecord || (fileRecord.tipo === "COMPROVANTE" && user.perfil !== "ADMIN")) {
+  if (!fileRecord) {
     return Response.json({ error: "Arquivo não encontrado." }, { status: 404 });
   }
-  if (fileRecord.tipo === "EQUINO" && user.perfil !== "ADMIN") {
+  if (fileRecord.tipo === "COMPROVANTE") {
+    if (!isClientAccount || !fileRecord.lancamento_id) {
+      return Response.json({ error: "Arquivo não encontrado." }, { status: 404 });
+    }
+    const entryAccess = await getPool().query(
+      `select 1 from public.financeiro_lancamentos
+       where id = $1 and tenant_id = $2 and criado_por = $3
+         and excluido_em is null`,
+      [fileRecord.lancamento_id, fileRecord.tenant_id, user.id],
+    );
+    if (!entryAccess.rowCount) {
+      return Response.json({ error: "Arquivo não encontrado." }, { status: 404 });
+    }
+  }
+  if (
+    fileRecord.tipo === "EQUINO" &&
+    user.perfil !== "ADMIN" &&
+    user.perfil !== "OPERACIONAL"
+  ) {
     const horseAccess = await getPool().query(
       `select 1
        from public.equinos
        where id = $1 and tenant_id = $2 and criado_por = $3
          and excluido_em is null`,
-      [fileRecord.equino_id, user.tenant_id, user.id],
+      [fileRecord.equino_id, fileRecord.tenant_id, user.id],
     );
     if (!horseAccess.rowCount) {
       return Response.json({ error: "Arquivo não encontrado." }, { status: 404 });

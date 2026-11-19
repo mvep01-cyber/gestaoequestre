@@ -28,6 +28,8 @@ import {
 import { useRouter } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 import { signOut } from "next-auth/react";
+import { CteHarasRegistrations, type CteHarasRegistration } from "./cte-haras-registrations";
+import { AdminFinance, type AdminFinanceEntry } from "./admin-finance";
 
 type HorseRecord = {
   id: string;
@@ -50,20 +52,13 @@ type HorseRecord = {
   alimentacao_diaria?: string | null;
   valor_mensalidade?: number;
   created_at?: string | null;
+  cte_haras_nome?: string | null;
+  cte_haras_tipo?: "CTE" | "HARAS" | null;
 };
 
 const horseCoatTypes = [
-  "Branco",
-  "Preto",
-  "Alazão",
-  "Baio",
-  "Castanha",
-  "Tordilha",
-  "Rosilha",
-  "Pampa de Preto",
-  "Pampa de Marrom",
-  "Pampa de Castanho",
-  "Pampa de Alazão",
+  "Branco", "Preto", "Alazão", "Baio", "Castanha", "Tordilha", "Rosilha",
+  "Pampa de Preto", "Pampa de Marrom", "Pampa de Castanho", "Pampa de Alazão",
 ] as const;
 
 type MedicationApplication = {
@@ -161,15 +156,14 @@ type ClientRecord = {
   data_fim: string | null;
 };
 
-type CteHarasRegistration = ClientRecord & {
-  tipo_cadastro: "CTE" | "HARAS";
-  login_email?: string | null;
-};
-
 type DashboardProps = {
   demo: boolean;
   role: string;
   clientRegistrationType?: "CTE" | "HARAS" | null;
+  globalAdmin?: boolean;
+  selectedTenantId?: string;
+  adminFinanceConfigured?: boolean;
+  adminFinanceEntries?: AdminFinanceEntry[];
   plan: string;
   tenantName: string;
   horses: HorseRecord[];
@@ -202,10 +196,6 @@ type ClientFormState = {
   numero_socio_abccmm: string;
   data_inicio: string;
   data_fim: string;
-  tipo_cadastro: "" | "CTE" | "HARAS";
-  gerar_acesso: boolean;
-  login_email: string;
-  login_senha: string;
 };
 
 const clientFormDefaults: ClientFormState = {
@@ -222,125 +212,9 @@ const clientFormDefaults: ClientFormState = {
   numero_socio_abccmm: "",
   data_inicio: "",
   data_fim: "",
-  tipo_cadastro: "",
-  gerar_acesso: false,
-  login_email: "",
-  login_senha: "",
 };
 
-function getClientFormError(form: ClientFormState): string | null {
-  const requiredFields: {
-    key:
-      | "nome"
-      | "telefone_whatsapp"
-      | "documento"
-      | "cpf"
-      | "rg"
-      | "data_nascimento"
-      | "profissao"
-      | "endereco_completo"
-      | "numero_socio_abccmm"
-      | "data_inicio"
-      | "data_fim";
-    label: string;
-  }[] = [
-    { key: "nome", label: "Nome do cliente" },
-    { key: "telefone_whatsapp", label: "Telefone WhatsApp" },
-    { key: "documento", label: "Documento" },
-    { key: "cpf", label: "CPF" },
-    { key: "rg", label: "RG" },
-    { key: "data_nascimento", label: "Data de nascimento" },
-    { key: "profissao", label: "Profissão" },
-    { key: "endereco_completo", label: "Endereço completo" },
-    { key: "numero_socio_abccmm", label: "Número de sócio ABCCMM" },
-    { key: "data_inicio", label: "Data de início" },
-    { key: "data_fim", label: "Data de fim" },
-  ];
-  const missingField = requiredFields.find(({ key }) => !form[key].trim());
-  return missingField
-    ? `${missingField.label} - Preenchimento Obrigatório.`
-    : null;
-}
-
-function getCteHarasFormError(form: ClientFormState): string | null {
-  const baseError =
-    getClientFormError(form) ??
-    (form.tipo_cadastro === "CTE" || form.tipo_cadastro === "HARAS"
-      ? null
-      : "Tipo do cadastro - Preenchimento Obrigatório.");
-  if (baseError) return baseError;
-  if (!form.gerar_acesso) return null;
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.login_email.trim())) {
-    return "E-mail de acesso - Preenchimento obrigatório ou inválido.";
-  }
-  if (form.login_senha.length < 12 || form.login_senha.length > 200) {
-    return "Senha de acesso - Informe entre 12 e 200 caracteres.";
-  }
-  return null;
-}
-
-function clientToForm(client: ClientRecord): ClientFormState {
-  return {
-    id: client.id,
-    nome: client.nome,
-    telefone_whatsapp: client.telefone_whatsapp ?? "",
-    documento: client.documento ?? "",
-    cpf: client.cpf ?? "",
-    rg: client.rg ?? "",
-    data_nascimento: client.data_nascimento ?? "",
-    idade: client.idade == null ? "" : String(client.idade),
-    profissao: client.profissao ?? "",
-    endereco_completo: client.endereco_completo ?? "",
-    numero_socio_abccmm:
-      client.numero_socio_abccmm == null ? "" : String(client.numero_socio_abccmm),
-    data_inicio: client.data_inicio ?? "",
-    data_fim: client.data_fim ?? "",
-    tipo_cadastro: "",
-    gerar_acesso: false,
-    login_email: "",
-    login_senha: "",
-  };
-}
-
-function clientFieldsFromForm(form: ClientFormState): Omit<ClientRecord, "id"> {
-  return {
-    nome: form.nome.trim(),
-    telefone_whatsapp: form.telefone_whatsapp.trim() || null,
-    documento: form.documento.trim() || null,
-    cpf: form.cpf.trim() || null,
-    rg: form.rg.trim() || null,
-    data_nascimento: form.data_nascimento.trim() || null,
-    idade: form.idade ? Number(form.idade) : null,
-    profissao: form.profissao.trim() || null,
-    endereco_completo: form.endereco_completo.trim() || null,
-    numero_socio_abccmm: form.numero_socio_abccmm
-      ? Number(form.numero_socio_abccmm)
-      : null,
-    data_inicio: form.data_inicio.trim() || null,
-    data_fim: form.data_fim.trim() || null,
-  };
-}
-
-function cteHarasRegistrationToForm(registration: CteHarasRegistration): ClientFormState {
-  return {
-    ...clientToForm(registration),
-    tipo_cadastro: registration.tipo_cadastro,
-    gerar_acesso: false,
-    login_email: registration.login_email ?? "",
-    login_senha: "",
-  };
-}
-
-type Section =
-  | "home"
-  | "horses"
-  | "health"
-  | "schedule"
-  | "breeding"
-  | "finance"
-  | "admin"
-  | "clients"
-  | "cteHarasRegistrations";
+type Section = "home" | "horses" | "health" | "schedule" | "breeding" | "finance" | "admin" | "clients" | "cteHarasRegistrations";
 
 const demoApplications: MedicationApplication[] = [
   {
@@ -428,7 +302,7 @@ const sectionTitles: Record<Section, { title: string; subtitle: string }> = {
   },
   cteHarasRegistrations: {
     title: "Cadastro CTE/Haras",
-    subtitle: "Cadastre e consulte registros separados de CTE e Haras.",
+    subtitle: "Cadastre, consulte e mantenha os dados de CTE e Haras.",
   },
   admin: {
     title: "Plataforma",
@@ -453,25 +327,18 @@ function getHorseSexLabel(sex: string) {
   return "Não informado";
 }
 
+function formatHorseDate(date: string | null) {
+  if (!date) return "—";
+  const [year, month, day] = date.slice(0, 10).split("-");
+  return year && month && day ? `${day}/${month}/${year}` : date;
+}
+
 function getTime(date: string) {
   return new Intl.DateTimeFormat("pt-BR", {
     hour: "2-digit",
     minute: "2-digit",
     timeZone: "America/Sao_Paulo",
   }).format(new Date(date));
-}
-
-function formatClientDate(date: string | Date | null) {
-  if (!date) return "—";
-  if (date instanceof Date && Number.isNaN(date.getTime())) return "—";
-  const dateOnly =
-    date instanceof Date
-      ? `${date.getFullYear().toString().padStart(4, "0")}-${(date.getMonth() + 1)
-          .toString()
-          .padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`
-      : date.slice(0, 10);
-  const [year, month, day] = dateOnly.split("-");
-  return year && month && day ? `${day}/${month}/${year}` : dateOnly;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -491,8 +358,7 @@ function isHorseRecord(value: unknown): value is HorseRecord {
     (typeof value.nome_pai === "string" || value.nome_pai === null) &&
     (typeof value.nome_mae === "string" || value.nome_mae === null) &&
     (typeof value.data_nascimento === "string" || value.data_nascimento === null) &&
-    (typeof value.registro_associacao === "string" ||
-      value.registro_associacao === null) &&
+    (typeof value.registro_associacao === "string" || value.registro_associacao === null) &&
     typeof value.sexo === "string" &&
     (typeof value.pelagem === "string" || value.pelagem === null)
   );
@@ -540,22 +406,9 @@ function isClientRecord(value: unknown): value is ClientRecord {
     (typeof value.idade === "number" || value.idade === null) &&
     (typeof value.profissao === "string" || value.profissao === null) &&
     (typeof value.endereco_completo === "string" || value.endereco_completo === null) &&
-    (
-      typeof value.numero_socio_abccmm === "number" ||
-      typeof value.numero_socio_abccmm === "string" ||
-      value.numero_socio_abccmm === null
-    ) &&
+    (typeof value.numero_socio_abccmm === "number" || value.numero_socio_abccmm === null) &&
     (typeof value.data_inicio === "string" || value.data_inicio === null) &&
     (typeof value.data_fim === "string" || value.data_fim === null)
-  );
-}
-
-function isCteHarasRegistration(value: unknown): value is CteHarasRegistration {
-  if (!isRecord(value)) return false;
-  const registrationType = value.tipo_cadastro;
-  return (
-    isClientRecord(value) &&
-    (registrationType === "CTE" || registrationType === "HARAS")
   );
 }
 
@@ -635,19 +488,17 @@ export function Dashboard({
   financeEntries: initialFinanceEntries = [],
   reproductionCycles: initialReproductionCycles = [],
   clients: initialClients = [],
-  cteHarasRegistrations: initialCteHarasRegistrations = [],
+  cteHarasRegistrations = [],
+  selectedTenantId,
+  adminFinanceConfigured = false,
+  adminFinanceEntries = [],
 }: DashboardProps) {
   const router = useRouter();
   const [activeSection, setActiveSection] = useState<Section>(
-    role === "SUPER_ADMIN"
-      ? "admin"
-      : role === "CLIENTE"
-        ? clientRegistrationType === "CTE" || clientRegistrationType === "HARAS"
-          ? "horses"
-          : "cteHarasRegistrations"
-        : "home",
+    role === "SUPER_ADMIN" ? "admin" : role === "CLIENTE" ? "horses" : "home",
   );
-  const [horses, setHorses] = useState(initialHorses);
+  const [demoHorses, setDemoHorses] = useState(initialHorses);
+  const horses = demo ? demoHorses : initialHorses;
   const [applications, setApplications] = useState(
     demo && medicationApplications.length === 0 ? demoApplications : medicationApplications,
   );
@@ -657,10 +508,8 @@ export function Dashboard({
   const [tenants, setTenants] = useState(managedTenants);
   const [financeEntries, setFinanceEntries] = useState(initialFinanceEntries);
   const [reproductionCycles, setReproductionCycles] = useState(initialReproductionCycles);
-  const [clients, setClients] = useState(initialClients);
-  const [cteHarasRegistrations, setCteHarasRegistrations] = useState(
-    initialCteHarasRegistrations,
-  );
+  const [demoClients, setDemoClients] = useState(initialClients);
+  const clients = demo ? demoClients : initialClients;
   const [selectedAccounts, setSelectedAccounts] = useState<Record<string, string>>({});
   const [horseCategory, setHorseCategory] = useState("");
   const [selectedOwnerId, setSelectedOwnerId] = useState("");
@@ -698,37 +547,31 @@ export function Dashboard({
   const [cycleDueDate, setCycleDueDate] = useState("");
   const [showClientForm, setShowClientForm] = useState(false);
   const [clientForm, setClientForm] = useState<ClientFormState>(clientFormDefaults);
-  const [clientFormContext, setClientFormContext] = useState<
-    "client" | "cteHarasRegistration"
-  >("client");
   const isOperational = role === "OPERACIONAL";
   const isHaras = plan === "HARAS";
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isAdmin = role === "ADMIN";
-  const isClient = role === "CLIENTE";
   const isClientAccount =
-    isClient &&
+    role === "CLIENTE" &&
     (clientRegistrationType === "CTE" || clientRegistrationType === "HARAS");
-  const canManageHorses = isAdmin || isOperational || isClientAccount;
+  const canManageHorses = isOperational || isClientAccount;
   const canManageClients = isAdmin || isOperational || isClientAccount;
 
   const visibleNav = useMemo(
     () =>
       navItems.filter((item) => {
         if (isSuperAdmin) return item.id === "admin";
-        if (isClient) {
-          return isClientAccount
-            ? item.id === "horses" || item.id === "clients"
-            : item.id === "cteHarasRegistrations";
+        if (role === "CLIENTE") {
+          return isClientAccount && (item.id === "horses" || item.id === "clients" || item.id === "finance");
         }
-        if (item.id === "cteHarasRegistrations") return isAdmin;
-        if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || item.id === "finance" || item.id === "clients";
+        if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || item.id === "finance" || item.id === "clients" || item.id === "cteHarasRegistrations";
+        if (item.id === "cteHarasRegistrations") return false;
         if (item.id === "breeding") return isHaras && !isOperational;
         if (item.id === "finance") return !isOperational;
         if (item.id === "admin") return isSuperAdmin;
         return true;
       }),
-    [isAdmin, isClient, isClientAccount, isHaras, isOperational, isSuperAdmin],
+    [isAdmin, isClientAccount, isHaras, isOperational, isSuperAdmin, role],
   );
 
   const filteredHorses = useMemo(() => {
@@ -737,18 +580,9 @@ export function Dashboard({
       const matchesCategory = !horseCategory || horse.categoria === horseCategory;
       const matchesSearch =
         !query ||
-        [
-          horse.nome,
-          horse.baia ?? "",
-          horse.categoria,
-          horse.nome_pai ?? "",
-          horse.nome_mae ?? "",
-          horse.registro_associacao ?? "",
-          horse.data_nascimento ?? "",
-          horse.sexo,
-          horse.pelagem ?? "",
-          ...horse.raca,
-        ]
+        [horse.nome, horse.baia ?? "", horse.categoria, horse.nome_pai ?? "",
+          horse.nome_mae ?? "", horse.registro_associacao ?? "", horse.data_nascimento ?? "",
+          horse.sexo, horse.pelagem ?? "", ...horse.raca]
           .join(" ")
           .toLocaleLowerCase("pt-BR")
           .includes(query);
@@ -757,39 +591,21 @@ export function Dashboard({
   }, [horseCategory, horses, search]);
 
   const filteredClients = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = search.trim().toLocaleLowerCase("pt-BR");
     return clients.filter((client) => {
       if (!query) return true;
       const haystack = [
         client.nome,
         client.telefone_whatsapp ?? "",
+        client.documento ?? "",
         client.cpf ?? "",
         client.rg ?? "",
-        client.documento ?? "",
         client.profissao ?? "",
         client.endereco_completo ?? "",
-      ].join(" ").toLowerCase();
+      ].join(" ").toLocaleLowerCase("pt-BR");
       return haystack.includes(query);
     });
   }, [clients, search]);
-
-  const filteredCteHarasRegistrations = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return cteHarasRegistrations.filter((registration) => {
-      if (!query) return true;
-      const haystack = [
-        registration.tipo_cadastro,
-        registration.nome,
-        registration.telefone_whatsapp ?? "",
-        registration.cpf ?? "",
-        registration.rg ?? "",
-        registration.documento ?? "",
-        registration.profissao ?? "",
-        registration.endereco_completo ?? "",
-      ].join(" ").toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [cteHarasRegistrations, search]);
 
   const title = sectionTitles[activeSection];
   const pendingCount = demo ? applications.length : pendingMedicationCount;
@@ -820,14 +636,14 @@ export function Dashboard({
     setHorseStable(horse?.baia ?? "");
     setHorseOwnerName(horse?.nome_proprietario ?? "");
     setHorseOwnerId(
-      horse?.proprietario_id ??
-        clients.find((client) => client.nome === horse?.nome_proprietario)?.id ??
-        "",
+      horse?.proprietario_id && clients.some((client) => client.id === horse.proprietario_id)
+        ? horse.proprietario_id
+        : horse?.proprietario_id || horse?.nome_proprietario ? "unavailable" : "",
     );
     setHorseTrainerName(horse?.nome_treinador ?? "");
     setHorseFather(horse?.nome_pai ?? "");
     setHorseMother(horse?.nome_mae ?? "");
-    setHorseBirthDate(horse?.data_nascimento ?? "");
+    setHorseBirthDate(horse?.data_nascimento?.slice(0, 10) ?? "");
     setHorseRegistration(horse?.registro_associacao ?? "");
     setHorseSex(horse?.sexo ?? "INDEFINIDO");
     setHorseCoat(horse?.pelagem ?? "");
@@ -849,15 +665,16 @@ export function Dashboard({
   async function handleSaveHorse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback("");
-    setIsSaving(true);
-
     const selectedOwner = clients.find((client) => client.id === horseOwnerId);
-    const horseFields = {
+    if (isClientAccount && horseOwnerId && !selectedOwner) {
+      setFeedback("Selecione um proprietário do seu cadastro ou escolha a opção sem proprietário.");
+      return;
+    }
+    setIsSaving(true);
+    const fields = {
       nome: horseName.trim(),
       baia: horseStable.trim() || null,
-      nome_proprietario: isClientAccount
-        ? selectedOwner?.nome ?? null
-        : horseOwnerName.trim() || null,
+      nome_proprietario: isClientAccount ? selectedOwner?.nome ?? null : horseOwnerName.trim() || null,
       proprietario_id: isClientAccount ? selectedOwner?.id ?? null : null,
       nome_treinador: horseTrainerName.trim() || null,
       nome_pai: horseFather.trim() || null,
@@ -874,66 +691,25 @@ export function Dashboard({
       alimentacao_diaria: horseFeeding.trim() || null,
       valor_mensalidade: horseMonthlyFee.trim() ? Number(horseMonthlyFee) : 0,
     };
-    const horseId = horseEditingId;
 
     try {
       if (demo) {
-        if (horseId) {
-          setHorses((current) =>
-            current.map((horse) =>
-              horse.id === horseId ? { ...horse, ...horseFields } : horse,
-            ),
-          );
-        } else {
-          setHorses((current) => [
-            ...current,
-            {
-              id: `demo-${Date.now()}`,
-              ...horseFields,
-              created_at: new Date().toISOString(),
-            },
-          ]);
-        }
+        setDemoHorses((current) => horseEditingId
+          ? current.map((horse) => horse.id === horseEditingId ? { ...horse, ...fields } : horse)
+          : [...current, { id: `demo-${Date.now()}`, ...fields, created_at: new Date().toISOString() }]);
       } else {
-        const result = await postDashboardAction(
-          horseId ? "updateHorse" : "createHorse",
-          { ...horseFields, ...(horseId ? { id: horseId } : {}) },
-        );
+        const result = await postDashboardAction(horseEditingId ? "updateHorse" : "createHorse", {
+          ...fields,
+          ...(horseEditingId ? { id: horseEditingId } : {}),
+          tenantId: selectedTenantId,
+        });
         const horse = isRecord(result) ? result.horse : null;
         if (!isHorseRecord(horse)) {
           throw new Error("O servidor não retornou o cavalo salvo.");
         }
-        setHorses((current) =>
-          horseId
-            ? current.map((currentHorse) =>
-                currentHorse.id === horseId
-                  ? { ...currentHorse, ...horse }
-                  : currentHorse,
-              )
-            : [...current, horse],
-        );
       }
-
-      setHorseName("");
-      setHorseStable("");
-      setHorseOwnerName("");
-      setHorseTrainerName("");
-      setHorseFather("");
-      setHorseMother("");
-      setHorseBirthDate("");
-      setHorseRegistration("");
-      setHorseSex("INDEFINIDO");
-      setHorseCoat("");
-      setHorsePhotoUrl("");
-      setHorseBreeds("");
-      setHorseFormCategory("ATLETA");
-      setHorseStatus("DESCANSO");
-      setHorseChip("");
-      setHorseFeeding("");
-      setHorseMonthlyFee("0");
-      setShowHorseForm(false);
-      setHorseEditingId(null);
-      setFeedback(horseId ? "Animal atualizado." : "Cavalo cadastrado.");
+      closeHorseForm();
+      setFeedback(horseEditingId ? "Animal atualizado." : "Cavalo cadastrado.");
       router.refresh();
     } catch (error) {
       console.error("Falha ao salvar cavalo:", error);
@@ -946,26 +722,22 @@ export function Dashboard({
   }
 
   async function handleDeleteHorse(horse: HorseRecord) {
-    if (
-      !window.confirm(
-        `Excluir ${horse.nome} do cadastro? O registro será mantido no histórico.`,
-      )
-    ) {
-      return;
-    }
-
+    if (!window.confirm(`Excluir ${horse.nome} do cadastro? O registro será mantido no histórico.`)) return;
+    setFeedback("");
+    setIsSaving(true);
     try {
-      if (!demo) {
-        await postDashboardAction("deleteHorse", { id: horse.id });
+      if (demo) {
+        setDemoHorses((current) => current.filter((item) => item.id !== horse.id));
+      } else {
+        await postDashboardAction("deleteHorse", { id: horse.id, tenantId: selectedTenantId });
       }
-      setHorses((current) => current.filter((currentHorse) => currentHorse.id !== horse.id));
       setFeedback("Animal excluído do cadastro.");
       router.refresh();
     } catch (error) {
       console.error("Falha ao excluir cavalo:", error);
-      setFeedback(
-        error instanceof Error ? error.message : "Não foi possível excluir o cavalo.",
-      );
+      setFeedback(error instanceof Error ? error.message : "Não foi possível excluir o cavalo.");
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -1246,28 +1018,37 @@ export function Dashboard({
   async function handleCreateClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback("");
-    const formError = getClientFormError(clientForm);
-    if (formError) {
-      setFeedback(formError);
-      return;
-    }
     setIsSaving(true);
 
+    let demoClientNumber = 1;
+    while (clients.some((client) => client.id === `demo-client-${demoClientNumber}`)) {
+      demoClientNumber += 1;
+    }
     const newClient: ClientRecord = {
-      id: `demo-client-${clients.length + 1}`,
-      ...clientFieldsFromForm(clientForm),
+      id: `demo-client-${demoClientNumber}`,
+      nome: clientForm.nome.trim(),
+      telefone_whatsapp: clientForm.telefone_whatsapp.trim() || null,
+      documento: clientForm.documento.trim() || null,
+      cpf: clientForm.cpf?.trim() || null,
+      rg: clientForm.rg?.trim() || null,
+      data_nascimento: clientForm.data_nascimento?.trim() || null,
+      idade: clientForm.idade ? Number(clientForm.idade) : null,
+      profissao: clientForm.profissao?.trim() || null,
+      endereco_completo: clientForm.endereco_completo?.trim() || null,
+      numero_socio_abccmm: clientForm.numero_socio_abccmm ? Number(clientForm.numero_socio_abccmm) : null,
+      data_inicio: clientForm.data_inicio?.trim() || null,
+      data_fim: clientForm.data_fim?.trim() || null,
     };
 
     try {
       if (demo) {
-        setClients((current) => [...current, newClient]);
+        setDemoClients((current) => [...current, newClient]);
       } else {
-        const result = await postDashboardAction("createClient", newClient);
+        const result = await postDashboardAction("createClient", { ...newClient, tenantId: selectedTenantId });
         const client = isRecord(result) ? result.client : null;
         if (!isClientRecord(client)) {
           throw new Error("O servidor não retornou o cliente cadastrado.");
         }
-        setClients((current) => [...current, client]);
       }
 
       setClientForm(clientFormDefaults);
@@ -1287,44 +1068,25 @@ export function Dashboard({
   async function handleUpdateClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback("");
-    const formError = getClientFormError(clientForm);
-    if (formError) {
-      setFeedback(formError);
-      return;
-    }
     setIsSaving(true);
 
     const updatedClient: ClientRecord = {
-      id: clientForm.id,
-      ...clientFieldsFromForm(clientForm),
+      ...clientForm,
+      idade: clientForm.idade ? Number(clientForm.idade) : null,
+      numero_socio_abccmm: clientForm.numero_socio_abccmm ? Number(clientForm.numero_socio_abccmm) : null,
     };
 
     try {
       if (demo) {
-        setClients((current) =>
+        setDemoClients((current) =>
           current.map((client) => (client.id === updatedClient.id ? updatedClient : client)),
         );
       } else {
-        const result = await postDashboardAction("updateClient", updatedClient);
+        const result = await postDashboardAction("updateClient", { ...updatedClient, tenantId: selectedTenantId });
         const client = isRecord(result) ? result.client : null;
         if (!isClientRecord(client)) {
           throw new Error("O servidor não retornou o cliente atualizado.");
         }
-        setClients((current) =>
-          current.map((currentClient) =>
-            currentClient.id === updatedClient.id
-              ? {
-                  ...client,
-                  cte_haras_nome: currentClient.cte_haras_nome,
-                  cte_haras_tipo: currentClient.cte_haras_tipo,
-                  numero_socio_abccmm:
-                    typeof client.numero_socio_abccmm === "string"
-                      ? Number(client.numero_socio_abccmm)
-                      : client.numero_socio_abccmm,
-                }
-              : currentClient,
-          ),
-        );
       }
 
       setClientForm(clientFormDefaults);
@@ -1343,13 +1105,12 @@ export function Dashboard({
 
   async function handleDeleteClient(clientId: string) {
     if (demo) {
-      setClients((current) => current.filter((client) => client.id !== clientId));
+      setDemoClients((current) => current.filter((client) => client.id !== clientId));
       return;
     }
 
     try {
-      await postDashboardAction("deleteClient", { id: clientId });
-      setClients((current) => current.filter((client) => client.id !== clientId));
+      await postDashboardAction("deleteClient", { id: clientId, tenantId: selectedTenantId });
       setFeedback("Cliente excluído.");
       router.refresh();
     } catch (error) {
@@ -1360,150 +1121,9 @@ export function Dashboard({
     }
   }
 
-  async function handleCreateCteHarasRegistration(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFeedback("");
-    const formError = getCteHarasFormError(clientForm);
-    if (formError) {
-      setFeedback(formError);
-      return;
-    }
-    const tipoCadastro = clientForm.tipo_cadastro;
-    if (tipoCadastro !== "CTE" && tipoCadastro !== "HARAS") {
-      setFeedback("Tipo do cadastro - Preenchimento Obrigatório.");
-      return;
-    }
-    setIsSaving(true);
-
-    const newRegistration: CteHarasRegistration = {
-      id: `demo-cte-haras-${cteHarasRegistrations.length + 1}`,
-      ...clientFieldsFromForm(clientForm),
-      tipo_cadastro: tipoCadastro,
-    };
-
-    try {
-      if (demo) {
-        setCteHarasRegistrations((current) => [...current, newRegistration]);
-      } else {
-        const result = await postDashboardAction("createCteHarasRegistration", {
-          ...clientFieldsFromForm(clientForm),
-          tipo_cadastro: tipoCadastro,
-          gerar_acesso: clientForm.gerar_acesso,
-          login_email: clientForm.login_email,
-          login_senha: clientForm.login_senha,
-        });
-        const registration = isRecord(result) ? result.registration : null;
-        if (!isCteHarasRegistration(registration)) {
-          throw new Error("O servidor não retornou o cadastro criado.");
-        }
-        setCteHarasRegistrations((current) => [...current, registration]);
-      }
-
-      setClientForm(clientFormDefaults);
-      setShowClientForm(false);
-      setFeedback("Cadastro CTE/Haras criado.");
-      router.refresh();
-    } catch (error) {
-      console.error("Falha ao criar cadastro CTE/Haras:", error);
-      setFeedback(
-        error instanceof Error ? error.message : "Não foi possível criar o cadastro.",
-      );
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  async function handleUpdateCteHarasRegistration(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFeedback("");
-    const formError = getCteHarasFormError(clientForm);
-    if (formError) {
-      setFeedback(formError);
-      return;
-    }
-    const tipoCadastro = clientForm.tipo_cadastro;
-    if (tipoCadastro !== "CTE" && tipoCadastro !== "HARAS") {
-      setFeedback("Tipo do cadastro - Preenchimento Obrigatório.");
-      return;
-    }
-    setIsSaving(true);
-
-    const updatedRegistration: CteHarasRegistration = {
-      id: clientForm.id,
-      ...clientFieldsFromForm(clientForm),
-      tipo_cadastro: tipoCadastro,
-    };
-
-    try {
-      if (demo) {
-        setCteHarasRegistrations((current) =>
-          current.map((registration) =>
-            registration.id === updatedRegistration.id ? updatedRegistration : registration,
-          ),
-        );
-      } else {
-        const result = await postDashboardAction(
-          "updateCteHarasRegistration",
-          {
-            ...updatedRegistration,
-            gerar_acesso: clientForm.gerar_acesso,
-            login_email: clientForm.login_email,
-            login_senha: clientForm.login_senha,
-          },
-        );
-        const registration = isRecord(result) ? result.registration : null;
-        if (!isCteHarasRegistration(registration)) {
-          throw new Error("O servidor não retornou o cadastro atualizado.");
-        }
-        setCteHarasRegistrations((current) =>
-          current.map((currentRegistration) =>
-            currentRegistration.id === updatedRegistration.id ? registration : currentRegistration,
-          ),
-        );
-      }
-
-      setClientForm(clientFormDefaults);
-      setShowClientForm(false);
-      setFeedback("Cadastro CTE/Haras atualizado.");
-      router.refresh();
-    } catch (error) {
-      console.error("Falha ao atualizar cadastro CTE/Haras:", error);
-      setFeedback(
-        error instanceof Error ? error.message : "Não foi possível atualizar o cadastro.",
-      );
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  async function handleDeleteCteHarasRegistration(registrationId: string) {
-    if (demo) {
-      setCteHarasRegistrations((current) =>
-        current.filter((registration) => registration.id !== registrationId),
-      );
-      return;
-    }
-
-    try {
-      await postDashboardAction("deleteCteHarasRegistration", { id: registrationId });
-      setCteHarasRegistrations((current) =>
-        current.filter((registration) => registration.id !== registrationId),
-      );
-      setFeedback("Cadastro CTE/Haras excluído.");
-      router.refresh();
-    } catch (error) {
-      console.error("Falha ao excluir cadastro CTE/Haras:", error);
-      setFeedback(
-        error instanceof Error ? error.message : "Não foi possível excluir o cadastro.",
-      );
-    }
-  }
-
   function navigate(section: Section) {
     setActiveSection(section);
-    if (section === "clients" || section === "cteHarasRegistrations") {
-      setSearch("");
-    }
+    setSearch("");
     setFeedback("");
   }
 
@@ -1650,7 +1270,9 @@ export function Dashboard({
             <p>
               {search
                 ? "Tente buscar usando outro nome, raça ou número de baia."
-                : "Cadastre o primeiro cavalo para começar a organizar a rotina."}
+                : isAdmin
+                  ? "Não há cavalos cadastrados para este centro."
+                  : "Cadastre o primeiro cavalo para começar a organizar a rotina."}
             </p>
           </div>
         ) : (
@@ -1659,6 +1281,7 @@ export function Dashboard({
               <thead>
                 <tr>
                   <th scope="col">Animal</th>
+                  {isAdmin && <th scope="col">CTE/Haras que cadastrou</th>}
                   <th scope="col">Proprietário</th>
                   <th scope="col">Treinador</th>
                   <th scope="col">Nome do pai</th>
@@ -1683,49 +1306,35 @@ export function Dashboard({
                 {filteredHorses.map((horse) => (
                   <tr key={horse.id}>
                     <td>{horse.nome}</td>
+                    {isAdmin && (
+                      <td>
+                        {horse.cte_haras_nome
+                          ? `${horse.cte_haras_tipo === "CTE" ? "CTE" : "Haras"} — ${horse.cte_haras_nome}`
+                          : "Sem vínculo CTE/Haras"}
+                      </td>
+                    )}
                     <td>{horse.nome_proprietario || "—"}</td>
                     <td>{horse.nome_treinador || "—"}</td>
                     <td>{horse.nome_pai || "—"}</td>
                     <td>{horse.nome_mae || "—"}</td>
-                    <td>{formatClientDate(horse.data_nascimento)}</td>
+                    <td>{formatHorseDate(horse.data_nascimento)}</td>
                     <td>{horse.registro_associacao || "—"}</td>
                     <td>{getHorseSexLabel(horse.sexo)}</td>
                     <td>{horse.pelagem || "—"}</td>
                     <td>{horse.raca.join(", ") || "—"}</td>
                     <td>{horse.baia || "—"}</td>
                     <td>{horse.categoria}</td>
-                    <td>
-                      <span className={`status-pill status-${horse.status.toLowerCase()}`}>
-                        {getStatusLabel(horse.status)}
-                      </span>
-                    </td>
+                    <td><span className={`status-pill status-${horse.status.toLowerCase()}`}>{getStatusLabel(horse.status)}</span></td>
                     <td>{horse.chip_resenha || "—"}</td>
                     <td>{horse.alimentacao_diaria || "—"}</td>
-                    <td>
-                      {new Intl.NumberFormat("pt-BR", {
-                        style: "currency",
-                        currency: "BRL",
-                      }).format(horse.valor_mensalidade ?? 0)}
-                    </td>
+                    <td>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(horse.valor_mensalidade ?? 0)}</td>
                     <td>{horse.foto_url || "—"}</td>
-                    <td>{formatClientDate(horse.created_at ?? null)}</td>
+                    <td>{formatHorseDate(horse.created_at ?? null)}</td>
                     {canManageHorses && (
-                      <td>
-                        <div className="client-row-actions">
-                          <button
-                            className="button button-secondary"
-                            onClick={() => openHorseForm(horse)}
-                          >
-                            Alterar
-                          </button>
-                          <button
-                            className="button button-quiet"
-                            onClick={() => void handleDeleteHorse(horse)}
-                          >
-                            Excluir
-                          </button>
-                        </div>
-                      </td>
+                      <td><div className="client-row-actions">
+                        <button className="button button-secondary" disabled={isSaving} onClick={() => openHorseForm(horse)}>Alterar</button>
+                        <button className="button button-quiet" disabled={isSaving} onClick={() => void handleDeleteHorse(horse)}>Excluir</button>
+                      </div></td>
                     )}
                   </tr>
                 ))}
@@ -1996,115 +1605,6 @@ export function Dashboard({
     );
   }
 
-  function renderCteHarasRegistrations() {
-    return (
-      <>
-        <div className="list-toolbar">
-          <form
-            className="search-box"
-            role="search"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setSearch(search.trim());
-            }}
-          >
-            <Search size={20} />
-            <span className="sr-only">Buscar cadastro CTE/Haras</span>
-            <input
-              type="search"
-              placeholder="Buscar por tipo, nome, documento ou telefone"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </form>
-          {isAdmin && (
-            <button
-              className="button button-primary"
-              onClick={() => {
-                setFeedback("");
-                setClientFormContext("cteHarasRegistration");
-                setClientForm(clientFormDefaults);
-                setShowClientForm(true);
-              }}
-            >
-              <Plus size={20} /> Novo cadastro
-            </button>
-          )}
-        </div>
-        {filteredCteHarasRegistrations.length === 0 ? (
-          <div className="panel empty-state">
-            <UsersRound size={34} />
-            <h2>
-              {search
-                ? "Nenhum cadastro CTE/Haras encontrado"
-                : "Ainda não há cadastros CTE/Haras"}
-            </h2>
-            <p>
-              {search
-                ? "Tente buscar usando outro tipo, nome, documento ou telefone."
-                : "Cadastre o primeiro registro para começar."}
-            </p>
-          </div>
-        ) : (
-          <div className="client-table-wrap">
-            <table className="client-table">
-              <thead>
-                <tr>
-                  <th scope="col">Tipo</th>
-                  <th scope="col">Nome</th>
-                  <th scope="col">Telefone</th>
-                  <th scope="col">Data de início</th>
-                  <th scope="col">Sócio ABCCMM</th>
-                  <th scope="col">Acesso</th>
-                  <th scope="col">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredCteHarasRegistrations.map((registration) => (
-                  <tr key={registration.id}>
-                    <td>{registration.tipo_cadastro === "CTE" ? "CTE" : "Haras"}</td>
-                    <td>{registration.nome}</td>
-                    <td>{registration.telefone_whatsapp || "—"}</td>
-                    <td>{formatClientDate(registration.data_inicio)}</td>
-                    <td>{registration.numero_socio_abccmm ?? "—"}</td>
-                    <td>{registration.login_email || "Não gerado"}</td>
-                    <td>
-                      <div className="client-row-actions">
-                        {isAdmin && (
-                          <>
-                            <button
-                              className="button button-secondary"
-                              onClick={() => {
-                                setFeedback("");
-                                setClientFormContext("cteHarasRegistration");
-                                setClientForm(cteHarasRegistrationToForm(registration));
-                                setShowClientForm(true);
-                              }}
-                            >
-                              Alterar
-                            </button>
-                            <button
-                              className="button button-quiet"
-                              onClick={() =>
-                                void handleDeleteCteHarasRegistration(registration.id)
-                              }
-                            >
-                              Excluir
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </>
-    );
-  }
-
   function renderFinance() {
     return (
       <div className="module-grid">
@@ -2310,33 +1810,21 @@ export function Dashboard({
     return (
       <>
         <div className="list-toolbar">
-          <form
-            className="search-box"
-            role="search"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setSearch(search.trim());
-            }}
-          >
+          <label className="search-box">
             <Search size={20} />
             <span className="sr-only">Buscar cliente</span>
             <input
-              type="search"
               placeholder="Buscar por nome, documento ou telefone"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
-          </form>
+          </label>
           {canManageClients && (
-            <button
-              className="button button-primary"
-              onClick={() => {
-                setFeedback("");
-                setClientFormContext("client");
-                setClientForm(clientFormDefaults);
-                setShowClientForm(true);
-              }}
-            >
+            <button className="button button-primary" onClick={() => {
+              setFeedback("");
+              setClientForm(clientFormDefaults);
+              setShowClientForm(true);
+            }}>
               <Plus size={20} /> Cadastrar cliente
             </button>
           )}
@@ -2369,7 +1857,7 @@ export function Dashboard({
                   <tr key={client.id}>
                     <td>{client.nome}</td>
                     <td>{client.telefone_whatsapp || "—"}</td>
-                    <td>{formatClientDate(client.data_inicio)}</td>
+                    <td>{client.data_inicio ? client.data_inicio.slice(0, 10).split("-").reverse().join("/") : "—"}</td>
                     <td>{client.numero_socio_abccmm ?? "—"}</td>
                     {isAdmin && (
                       <td>
@@ -2385,8 +1873,20 @@ export function Dashboard({
                             className="button button-secondary"
                             onClick={() => {
                               setFeedback("");
-                              setClientFormContext("client");
-                              setClientForm(clientToForm(client));
+                              setClientForm({
+                                ...client,
+                                telefone_whatsapp: client.telefone_whatsapp ?? "",
+                                documento: client.documento ?? "",
+                                cpf: client.cpf ?? "",
+                                rg: client.rg ?? "",
+                                data_nascimento: client.data_nascimento ?? "",
+                                idade: client.idade?.toString() ?? "",
+                                profissao: client.profissao ?? "",
+                                endereco_completo: client.endereco_completo ?? "",
+                                numero_socio_abccmm: client.numero_socio_abccmm?.toString() ?? "",
+                                data_inicio: client.data_inicio ?? "",
+                                data_fim: client.data_fim ?? "",
+                              });
                               setShowClientForm(true);
                             }}
                           >
@@ -2394,10 +1894,7 @@ export function Dashboard({
                           </button>
                         )}
                         {isAdmin && (
-                          <button
-                            className="button button-quiet"
-                            onClick={() => void handleDeleteClient(client.id)}
-                          >
+                          <button className="button button-quiet" onClick={() => void handleDeleteClient(client.id)}>
                             Excluir
                           </button>
                         )}
@@ -2424,13 +1921,29 @@ export function Dashboard({
       case "breeding":
         return renderBreeding();
       case "finance":
-        return renderFinance();
+        return isAdmin ? (
+          <AdminFinance
+            configured={adminFinanceConfigured}
+            demo={demo}
+            entries={adminFinanceEntries}
+            accounts={pixAccounts}
+            tenants={managedTenants}
+          />
+        ) : renderFinance();
       case "admin":
         return renderAdmin();
       case "clients":
         return renderClients();
       case "cteHarasRegistrations":
-        return isAdmin ? renderCteHarasRegistrations() : renderHome();
+        return isAdmin ? (
+          <CteHarasRegistrations
+            registrations={cteHarasRegistrations}
+            tenants={managedTenants}
+            tenantId={selectedTenantId}
+            demo={demo}
+            action={postDashboardAction}
+          />
+        ) : renderHome();
       default:
         return renderHome();
     }
@@ -2479,17 +1992,7 @@ export function Dashboard({
         <div className="sidebar-bottom">
           <div className="role-label">
             <ShieldCheck size={17} />
-            <span>
-              {role === "OPERACIONAL"
-                ? "Equipe operacional"
-                : role === "SUPER_ADMIN"
-                  ? "Super administrador"
-                  : isClientAccount
-                    ? `Acesso ${clientRegistrationType === "CTE" ? "CTE" : "Haras"}`
-                    : isClient
-                      ? "Acesso do cliente"
-                      : "Administrador"}
-            </span>
+            <span>{role === "OPERACIONAL" ? "Equipe operacional" : role === "SUPER_ADMIN" ? "Super administrador" : isClientAccount ? `Acesso ${clientRegistrationType === "CTE" ? "CTE" : "Haras"}` : "Administrador"}</span>
           </div>
           {!demo && (
             <button className="logout-button" onClick={() => void handleLogout()}>
@@ -2577,7 +2080,7 @@ export function Dashboard({
 
       {showHorseForm && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) closeHorseForm();
+          if (event.target === event.currentTarget && !isSaving) closeHorseForm();
         }}>
           <section
             className="modal-card"
@@ -2593,12 +2096,14 @@ export function Dashboard({
               <button
                 className="icon-button"
                 aria-label="Fechar"
+                disabled={isSaving}
                 onClick={closeHorseForm}
               >
                 <X size={22} />
               </button>
             </div>
             <form className="horse-form" onSubmit={(event) => void handleSaveHorse(event)}>
+              {feedback && <p className="feedback-message" role="alert">{feedback}</p>}
               <label htmlFor="horse-name">Nome do animal</label>
               <input
                 id="horse-name"
@@ -2610,59 +2115,23 @@ export function Dashboard({
                 placeholder="Ex.: Estrela do Campo"
               />
               <label htmlFor="horse-photo">URL da foto (opcional)</label>
-              <input
-                id="horse-photo"
-                type="url"
-                value={horsePhotoUrl}
-                onChange={(event) => setHorsePhotoUrl(event.target.value)}
-                maxLength={2000}
-                placeholder="https://..."
-              />
+              <input id="horse-photo" type="url" value={horsePhotoUrl} onChange={(event) => setHorsePhotoUrl(event.target.value)} maxLength={2000} placeholder="https://..." />
               <label htmlFor="horse-owner">Proprietário (opcional)</label>
               {isClientAccount ? (
-                <select
-                  id="horse-owner"
-                  value={horseOwnerId}
-                  onChange={(event) => setHorseOwnerId(event.target.value)}
-                >
+                <select id="horse-owner" value={horseOwnerId} onChange={(event) => setHorseOwnerId(event.target.value)}>
+                  {horseOwnerId === "unavailable" && <option value="unavailable" disabled>Selecione novamente o proprietário</option>}
                   <option value="">Sem proprietário selecionado</option>
-                  {clients.map((client) => (
-                    <option key={client.id} value={client.id}>
-                      {client.nome}
-                    </option>
-                  ))}
+                  {clients.map((client) => <option key={client.id} value={client.id}>{client.nome}</option>)}
                 </select>
               ) : (
-                <input
-                  id="horse-owner"
-                  value={horseOwnerName}
-                  onChange={(event) => setHorseOwnerName(event.target.value)}
-                  maxLength={120}
-                  placeholder="Digite o nome do proprietário"
-                />
+                <input id="horse-owner" value={horseOwnerName} onChange={(event) => setHorseOwnerName(event.target.value)} maxLength={120} placeholder="Digite o nome do proprietário" />
               )}
               <label htmlFor="horse-trainer">Treinador (opcional)</label>
-              <input
-                id="horse-trainer"
-                value={horseTrainerName}
-                onChange={(event) => setHorseTrainerName(event.target.value)}
-                maxLength={120}
-                placeholder="Digite o nome do treinador"
-              />
+              <input id="horse-trainer" value={horseTrainerName} onChange={(event) => setHorseTrainerName(event.target.value)} maxLength={120} placeholder="Digite o nome do treinador" />
               <label htmlFor="horse-breeds">Raça(s), separadas por vírgula (opcional)</label>
-              <input
-                id="horse-breeds"
-                value={horseBreeds}
-                onChange={(event) => setHorseBreeds(event.target.value)}
-                maxLength={500}
-                placeholder="Ex.: Mangalarga Marchador"
-              />
+              <input id="horse-breeds" value={horseBreeds} onChange={(event) => setHorseBreeds(event.target.value)} maxLength={500} placeholder="Ex.: Mangalarga Marchador" />
               <label htmlFor="horse-category">Categoria</label>
-              <select
-                id="horse-category"
-                value={horseFormCategory}
-                onChange={(event) => setHorseFormCategory(event.target.value)}
-              >
+              <select id="horse-category" value={horseFormCategory} onChange={(event) => setHorseFormCategory(event.target.value)}>
                 <option value="ATLETA">Atleta</option>
                 <option value="MATRIZ">Matriz</option>
                 <option value="GARANHAO">Garanhão</option>
@@ -2670,115 +2139,55 @@ export function Dashboard({
                 <option value="RECEPTORA">Receptora</option>
               </select>
               <label htmlFor="horse-status">Status</label>
-              <select
-                id="horse-status"
-                value={horseStatus}
-                onChange={(event) => setHorseStatus(event.target.value)}
-              >
+              <select id="horse-status" value={horseStatus} onChange={(event) => setHorseStatus(event.target.value)}>
                 <option value="EM_TREINO">Em treino</option>
                 <option value="EM_TRATAMENTO">Em tratamento</option>
                 <option value="DESCANSO">Descanso</option>
               </select>
               <label htmlFor="horse-father">Nome do pai (opcional)</label>
-              <input
-                id="horse-father"
-                value={horseFather}
-                onChange={(event) => setHorseFather(event.target.value)}
-                maxLength={120}
-                placeholder="Digite o nome do pai"
-              />
+              <input id="horse-father" value={horseFather} onChange={(event) => setHorseFather(event.target.value)} maxLength={120} placeholder="Digite o nome do pai" />
               <label htmlFor="horse-mother">Nome da mãe (opcional)</label>
-              <input
-                id="horse-mother"
-                value={horseMother}
-                onChange={(event) => setHorseMother(event.target.value)}
-                maxLength={120}
-                placeholder="Digite o nome da mãe"
-              />
+              <input id="horse-mother" value={horseMother} onChange={(event) => setHorseMother(event.target.value)} maxLength={120} placeholder="Digite o nome da mãe" />
               <label htmlFor="horse-birth-date">Data de nascimento (opcional)</label>
-              <input
-                id="horse-birth-date"
-                type="date"
-                value={horseBirthDate}
-                onChange={(event) => setHorseBirthDate(event.target.value)}
-              />
+              <input id="horse-birth-date" type="date" value={horseBirthDate} onChange={(event) => setHorseBirthDate(event.target.value)} />
               <label htmlFor="horse-registration">Número de registro ABCCMM (opcional)</label>
-              <input
-                id="horse-registration"
-                value={horseRegistration}
-                onChange={(event) => setHorseRegistration(event.target.value)}
-                maxLength={80}
-              />
+              <input id="horse-registration" value={horseRegistration} onChange={(event) => setHorseRegistration(event.target.value)} maxLength={80} />
               <label htmlFor="horse-sex">Sexo</label>
-              <select
-                id="horse-sex"
-                value={horseSex}
-                onChange={(event) => setHorseSex(event.target.value)}
-              >
+              <select id="horse-sex" value={horseSex} onChange={(event) => setHorseSex(event.target.value)}>
                 <option value="INDEFINIDO">Não informado</option>
                 <option value="MACHO">Macho</option>
                 <option value="FEMEA">Fêmea</option>
               </select>
               <label htmlFor="horse-coat">Pelagem (opcional)</label>
-              <select
-                id="horse-coat"
-                value={horseCoat}
-                onChange={(event) => setHorseCoat(event.target.value)}
-              >
+              <select id="horse-coat" value={horseCoat} onChange={(event) => setHorseCoat(event.target.value)}>
                 <option value="">Selecione</option>
-                {horseCoatTypes.map((coat) => (
-                  <option key={coat} value={coat}>
-                    {coat}
-                  </option>
-                ))}
+                {horseCoatTypes.map((coat) => <option key={coat} value={coat}>{coat}</option>)}
               </select>
               <label htmlFor="horse-stable">Baia (opcional)</label>
               <input
                 id="horse-stable"
                 value={horseStable}
                 onChange={(event) => setHorseStable(event.target.value)}
+                maxLength={40}
                 placeholder="Ex.: 04"
               />
               <label htmlFor="horse-chip">Chip / resenha (opcional)</label>
-              <input
-                id="horse-chip"
-                value={horseChip}
-                onChange={(event) => setHorseChip(event.target.value)}
-                maxLength={120}
-              />
+              <input id="horse-chip" value={horseChip} onChange={(event) => setHorseChip(event.target.value)} maxLength={120} />
               <label htmlFor="horse-feeding">Alimentação diária (opcional)</label>
-              <textarea
-                id="horse-feeding"
-                value={horseFeeding}
-                onChange={(event) => setHorseFeeding(event.target.value)}
-                maxLength={1000}
-                rows={3}
-              />
+              <textarea id="horse-feeding" value={horseFeeding} onChange={(event) => setHorseFeeding(event.target.value)} maxLength={1000} rows={3} />
               <label htmlFor="horse-monthly-fee">Mensalidade (R$)</label>
-              <input
-                id="horse-monthly-fee"
-                type="number"
-                min="0"
-                max="9999999999.99"
-                step="0.01"
-                value={horseMonthlyFee}
-                onChange={(event) => setHorseMonthlyFee(event.target.value)}
-              />
+              <input id="horse-monthly-fee" type="number" min="0" max="9999999999.99" step="0.01" value={horseMonthlyFee} onChange={(event) => setHorseMonthlyFee(event.target.value)} />
               <div className="modal-actions">
                 <button
                   type="button"
                   className="button button-quiet"
+                  disabled={isSaving}
                   onClick={closeHorseForm}
                 >
                   Cancelar
                 </button>
                 <button className="button button-primary" disabled={isSaving}>
-                  <Plus size={19} />
-                  {isSaving
-                    ? "Salvando..."
-                    : horseEditingId
-                      ? "Salvar alterações"
-                      : "Salvar cavalo"}
+                  <Plus size={19} /> {isSaving ? "Salvando..." : horseEditingId ? "Salvar alterações" : "Salvar cavalo"}
                 </button>
               </div>
             </form>
@@ -2798,18 +2207,8 @@ export function Dashboard({
           >
             <div className="modal-heading">
               <div>
-                <span className="eyebrow">
-                  {clientForm.id ? "Atualização cadastral" : "Novo cadastro"}
-                </span>
-                <h2 id="client-form-title">
-                  {clientFormContext === "cteHarasRegistration"
-                    ? clientForm.id
-                      ? "Editar cadastro CTE/Haras"
-                      : "Novo cadastro CTE/Haras"
-                    : clientForm.id
-                      ? "Editar cliente"
-                      : "Cadastrar cliente"}
-                </h2>
+                <span className="eyebrow">{clientForm.id ? "Atualização cadastral" : "Novo cadastro"}</span>
+                <h2 id="client-form-title">{clientForm.id ? "Editar cliente" : "Cadastrar cliente"}</h2>
               </div>
               <button
                 className="icon-button"
@@ -2819,92 +2218,7 @@ export function Dashboard({
                 <X size={22} />
               </button>
             </div>
-            <form
-              className="client-form"
-              noValidate
-              onSubmit={(event) => {
-                if (clientFormContext === "cteHarasRegistration") {
-                  void (clientForm.id
-                    ? handleUpdateCteHarasRegistration(event)
-                    : handleCreateCteHarasRegistration(event));
-                  return;
-                }
-                void (clientForm.id
-                  ? handleUpdateClient(event)
-                  : handleCreateClient(event));
-              }}
-            >
-              {clientFormContext === "cteHarasRegistration" && (
-                <>
-                  <label htmlFor="client-registration-type">Tipo do cadastro</label>
-                  <select
-                    id="client-registration-type"
-                    required
-                    value={clientForm.tipo_cadastro}
-                    onChange={(event) =>
-                      setClientForm({
-                        ...clientForm,
-                        tipo_cadastro:
-                          event.target.value === "CTE" || event.target.value === "HARAS"
-                            ? event.target.value
-                            : "",
-                      })
-                    }
-                  >
-                    <option value="">Selecione</option>
-                    <option value="CTE">CTE</option>
-                    <option value="HARAS">Haras</option>
-                  </select>
-                  <label className="checkbox-label" htmlFor="generate-client-access">
-                    <input
-                      id="generate-client-access"
-                      type="checkbox"
-                      checked={clientForm.gerar_acesso}
-                      onChange={(event) =>
-                        setClientForm({
-                          ...clientForm,
-                          gerar_acesso: event.target.checked,
-                        })
-                      }
-                    />
-                    Gerar login e senha para este CTE/Haras
-                  </label>
-                  {clientForm.gerar_acesso && (
-                    <>
-                      <label htmlFor="client-login-email">E-mail de acesso</label>
-                      <input
-                        id="client-login-email"
-                        type="email"
-                        autoComplete="email"
-                        required
-                        value={clientForm.login_email}
-                        onChange={(event) =>
-                          setClientForm({
-                            ...clientForm,
-                            login_email: event.target.value,
-                          })
-                        }
-                        placeholder="Ex.: cliente@exemplo.com"
-                      />
-                      <label htmlFor="client-login-password">Senha de acesso</label>
-                      <input
-                        id="client-login-password"
-                        type="password"
-                        autoComplete="new-password"
-                        required
-                        value={clientForm.login_senha}
-                        onChange={(event) =>
-                          setClientForm({
-                            ...clientForm,
-                            login_senha: event.target.value,
-                          })
-                        }
-                        placeholder="Mínimo de 12 caracteres"
-                      />
-                    </>
-                  )}
-                </>
-              )}
+            <form className="client-form" onSubmit={(event) => void (clientForm.id ? handleUpdateClient(event) : handleCreateClient(event))}>
               <label htmlFor="client-name">Nome do cliente</label>
               <input
                 id="client-name"
@@ -2974,6 +2288,9 @@ export function Dashboard({
               <input
                 id="client-member-number"
                 type="number"
+                min="0"
+                max="999999.99999"
+                step="any"
                 required
                 value={clientForm.numero_socio_abccmm ?? ""}
                 onChange={(event) => setClientForm({ ...clientForm, numero_socio_abccmm: event.target.value })}
@@ -2995,11 +2312,7 @@ export function Dashboard({
                 value={clientForm.data_fim}
                 onChange={(event) => setClientForm({ ...clientForm, data_fim: event.target.value })}
               />
-              {feedback && (
-                <p className="client-form-error" role="alert">
-                  {feedback}
-                </p>
-              )}
+              {feedback && <p className="client-form-error" role="alert">{feedback}</p>}
               <div className="modal-actions">
                 <button
                   type="button"
@@ -3009,12 +2322,7 @@ export function Dashboard({
                   Cancelar
                 </button>
                 <button className="button button-primary" disabled={isSaving}>
-                  <Plus size={19} />{" "}
-                  {isSaving
-                    ? "Salvando..."
-                    : clientFormContext === "cteHarasRegistration"
-                      ? "Salvar cadastro"
-                      : "Salvar cliente"}
+                  <Plus size={19} /> {isSaving ? "Salvando..." : "Salvar cliente"}
                 </button>
               </div>
             </form>

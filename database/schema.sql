@@ -71,6 +71,8 @@ alter table if exists public.proprietarios
 
 create index if not exists proprietarios_tenant_creator_idx
   on public.proprietarios (tenant_id, criado_por);
+create unique index if not exists proprietarios_id_tenant_creator_unique
+  on public.proprietarios (id, tenant_id, criado_por);
 
 create table if not exists public.cadastros_cte_haras (
   id uuid primary key default gen_random_uuid(),
@@ -341,8 +343,32 @@ create table if not exists public.medicamentos_aplicacoes (
     foreign key (tratamento_id, tenant_id)
     references public.tratamentos_medicamentos (id, tenant_id),
   constraint aplicacoes_usuario_tenant_fk
-    foreign key (aplicado_por, tenant_id) references public.usuarios (id, tenant_id)
+    foreign key (aplicado_por) references public.usuarios (id)
 );
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'aplicacoes_usuario_tenant_fk'
+      and conrelid = 'public.medicamentos_aplicacoes'::regclass
+  ) then
+    alter table public.medicamentos_aplicacoes
+      drop constraint aplicacoes_usuario_tenant_fk;
+  end if;
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'aplicacoes_usuario_fk'
+      and conrelid = 'public.medicamentos_aplicacoes'::regclass
+  ) then
+    alter table public.medicamentos_aplicacoes
+      add constraint aplicacoes_usuario_fk
+      foreign key (aplicado_por) references public.usuarios (id);
+  end if;
+end
+$$;
 
 create table if not exists public.agenda_treinos (
   id uuid primary key default gen_random_uuid(),
@@ -373,6 +399,7 @@ create table if not exists public.contas_bancarias (
 create table if not exists public.contratos_vendas (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants (id) on delete cascade,
+  criado_por uuid,
   tipo text not null check (tipo in ('COBERTURA', 'ANIMAL')),
   equino_id uuid not null,
   comprador_id uuid not null,
@@ -389,12 +416,33 @@ create table if not exists public.contratos_vendas (
   constraint contratos_comprador_tenant_fk
     foreign key (comprador_id, tenant_id) references public.proprietarios (id, tenant_id),
   constraint contratos_vendedor_tenant_fk
-    foreign key (vendedor_id, tenant_id) references public.usuarios (id, tenant_id)
+   foreign key (vendedor_id, tenant_id) references public.usuarios (id, tenant_id),
+ constraint contratos_criador_tenant_fk
+   foreign key (criado_por, tenant_id) references public.usuarios (id, tenant_id)
 );
+
+alter table public.contratos_vendas
+ add column if not exists criado_por uuid;
+
+do $$
+begin
+ if not exists (
+   select 1
+   from pg_constraint
+   where conname = 'contratos_criador_tenant_fk'
+     and conrelid = 'public.contratos_vendas'::regclass
+ ) then
+   alter table public.contratos_vendas
+     add constraint contratos_criador_tenant_fk
+     foreign key (criado_por, tenant_id) references public.usuarios (id, tenant_id);
+ end if;
+end
+$$;
 
 create table if not exists public.financeiro_lancamentos (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants (id) on delete cascade,
+ criado_por uuid,
   conta_bancaria_id uuid,
   equino_id uuid,
   proprietario_id uuid,
@@ -418,6 +466,7 @@ create table if not exists public.financeiro_lancamentos (
   gateway_cobranca_id text,
   pix_copia_cola text,
   link_pagamento text,
+  excluido_em timestamptz,
   percentual_comissao numeric(5, 2)
     check (percentual_comissao is null or percentual_comissao between 0 and 100),
   created_at timestamptz not null default now(),
@@ -432,6 +481,11 @@ create table if not exists public.financeiro_lancamentos (
     foreign key (contrato_venda_id, tenant_id) references public.contratos_vendas (id, tenant_id),
   constraint lancamentos_comissionado_tenant_fk
     foreign key (comissionado_id, tenant_id) references public.usuarios (id, tenant_id),
+  constraint lancamentos_criador_tenant_fk
+    foreign key (criado_por, tenant_id) references public.usuarios (id, tenant_id),
+  constraint lancamentos_cliente_criador_fk
+    foreign key (proprietario_id, tenant_id, criado_por)
+    references public.proprietarios (id, tenant_id, criado_por),
   constraint lancamentos_tratamento_tenant_fk
     foreign key (origem_tratamento_id, tenant_id)
     references public.tratamentos_medicamentos (id, tenant_id),
@@ -440,6 +494,46 @@ create table if not exists public.financeiro_lancamentos (
     references public.financeiro_lancamentos (id, tenant_id),
   constraint lancamentos_gateway_id_unique unique (gateway_cobranca_id)
 );
+
+alter table public.financeiro_lancamentos
+  add column if not exists criado_por uuid,
+  add column if not exists excluido_em timestamptz;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'lancamentos_criador_tenant_fk'
+      and conrelid = 'public.financeiro_lancamentos'::regclass
+  ) then
+    alter table public.financeiro_lancamentos
+      add constraint lancamentos_criador_tenant_fk
+      foreign key (criado_por, tenant_id) references public.usuarios (id, tenant_id);
+  end if;
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'lancamentos_cliente_criador_fk'
+      and conrelid = 'public.financeiro_lancamentos'::regclass
+  ) then
+    alter table public.financeiro_lancamentos
+      add constraint lancamentos_cliente_criador_fk
+      foreign key (proprietario_id, tenant_id, criado_por)
+      references public.proprietarios (id, tenant_id, criado_por);
+  end if;
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'lancamentos_autoria_e_cliente_obrigatorios'
+      and conrelid = 'public.financeiro_lancamentos'::regclass
+  ) then
+    alter table public.financeiro_lancamentos
+      add constraint lancamentos_autoria_e_cliente_obrigatorios
+      check (criado_por is not null and proprietario_id is not null) not valid;
+  end if;
+end
+$$;
 
 create index if not exists equinos_tenant_status_idx
   on public.equinos (tenant_id, status);
@@ -453,6 +547,9 @@ create index if not exists agenda_tenant_data_idx
   on public.agenda_treinos (tenant_id, data_hora);
 create index if not exists lancamentos_tenant_vencimento_idx
   on public.financeiro_lancamentos (tenant_id, status, data_vencimento);
+create index if not exists lancamentos_login_vencimento_idx
+  on public.financeiro_lancamentos (tenant_id, criado_por, status, data_vencimento)
+  where excluido_em is null;
 create index if not exists ciclos_tenant_matriz_idx
   on public.reproducao_ciclos (tenant_id, matriz_id, status);
 create unique index if not exists mensalidade_equino_competencia_unique
@@ -473,7 +570,7 @@ create table if not exists public.arquivos (
   created_at timestamptz not null default now(),
   unique (id, tenant_id),
   constraint arquivos_usuario_tenant_fk
-    foreign key (enviado_por, tenant_id) references public.usuarios (id, tenant_id),
+    foreign key (enviado_por) references public.usuarios (id),
   constraint arquivos_equino_tenant_fk
     foreign key (equino_id, tenant_id) references public.equinos (id, tenant_id),
   constraint arquivos_lancamento_tenant_fk
@@ -484,6 +581,30 @@ create table if not exists public.arquivos (
     or (tipo = 'COMPROVANTE' and lancamento_id is not null and equino_id is null)
   )
 );
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'arquivos_usuario_tenant_fk'
+      and conrelid = 'public.arquivos'::regclass
+  ) then
+    alter table public.arquivos
+      drop constraint arquivos_usuario_tenant_fk;
+  end if;
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'arquivos_enviado_por_fk'
+      and conrelid = 'public.arquivos'::regclass
+  ) then
+    alter table public.arquivos
+      add constraint arquivos_enviado_por_fk
+      foreign key (enviado_por) references public.usuarios (id);
+  end if;
+end
+$$;
 
 create index if not exists arquivos_tenant_tipo_idx
   on public.arquivos (tenant_id, tipo, created_at desc);
@@ -498,14 +619,20 @@ declare
   old_delta numeric(14, 2) := 0;
   new_delta numeric(14, 2) := 0;
 begin
-  if tg_op in ('UPDATE', 'DELETE') and old.status = 'PAGO' and old.conta_bancaria_id is not null then
+  if tg_op in ('UPDATE', 'DELETE')
+     and old.status = 'PAGO'
+     and old.excluido_em is null
+     and old.conta_bancaria_id is not null then
     old_delta := case when old.natureza = 'RECEITA' then old.valor else -old.valor end;
     update public.contas_bancarias
       set saldo_atual = saldo_atual - old_delta
       where id = old.conta_bancaria_id and tenant_id = old.tenant_id;
   end if;
 
-  if tg_op in ('INSERT', 'UPDATE') and new.status = 'PAGO' and new.conta_bancaria_id is not null then
+  if tg_op in ('INSERT', 'UPDATE')
+     and new.status = 'PAGO'
+     and new.excluido_em is null
+     and new.conta_bancaria_id is not null then
     new_delta := case when new.natureza = 'RECEITA' then new.valor else -new.valor end;
     update public.contas_bancarias
       set saldo_atual = saldo_atual + new_delta
@@ -533,6 +660,7 @@ begin
   end if;
 
   if new.status <> 'PAGO'
+     or new.excluido_em is not null
      or new.natureza <> 'RECEITA'
      or new.categoria not in ('MENSALIDADE', 'PARCELA_VENDA')
      or new.comissionado_id is null
@@ -550,11 +678,13 @@ begin
 
   if commission_rate > 0 then
     insert into public.financeiro_lancamentos (
-      tenant_id, comissionado_id, lancamento_origem_id, natureza, categoria,
+      tenant_id, criado_por, proprietario_id, comissionado_id,
+      lancamento_origem_id, natureza, categoria,
       descricao, valor, data_vencimento, status
     )
     values (
-      new.tenant_id, new.comissionado_id, new.id, 'DESPESA', 'COMISSAO',
+      new.tenant_id, new.criado_por, new.proprietario_id, new.comissionado_id,
+      new.id, 'DESPESA', 'COMISSAO',
       'Comissão: ' || new.descricao,
       round(new.valor * commission_rate / 100, 2),
       current_date, 'PENDENTE'
@@ -585,12 +715,13 @@ begin
     end;
 
     insert into public.financeiro_lancamentos (
-      tenant_id, equino_id, proprietario_id, contrato_venda_id,
+      tenant_id, criado_por, equino_id, proprietario_id, contrato_venda_id,
       comissionado_id, percentual_comissao, natureza, categoria,
       descricao, numero_parcela, valor, data_vencimento, status
     )
     values (
       new.tenant_id,
+      new.criado_por,
       new.equino_id,
       new.comprador_id,
       new.id,
@@ -682,9 +813,11 @@ create trigger reproducao_registra_nascimento
 after insert or update of status on public.reproducao_ciclos
 for each row execute function public.app_create_foal_on_birth();
 
+drop function if exists public.app_gerar_cobranca_mensal(uuid, uuid, date);
 create or replace function public.app_gerar_cobranca_mensal(
   p_tenant_id uuid,
   p_proprietario_id uuid,
+  p_criado_por uuid,
   p_competencia date
 )
 returns jsonb
@@ -694,6 +827,7 @@ set search_path = ''
 as $$
 declare
   tenant_key uuid := p_tenant_id;
+  creator_key uuid := p_criado_por;
   due_day integer;
   due_date date;
   inserted_count integer := 0;
@@ -702,6 +836,7 @@ declare
   row_count integer;
 begin
   if tenant_key is null
+     or creator_key is null
      or p_competencia is null then
     raise exception 'Dados inválidos.';
   end if;
@@ -713,7 +848,9 @@ begin
   select coalesce(dia_vencimento_padrao, 10)
   into due_day
   from public.proprietarios
-  where id = p_proprietario_id and tenant_id = tenant_key;
+  where id = p_proprietario_id
+    and tenant_id = tenant_key
+    and criado_por = creator_key;
 
   if due_day is null then
     raise exception 'Proprietário não encontrado neste centro.';
@@ -730,11 +867,13 @@ begin
 
   with inserted as (
     insert into public.financeiro_lancamentos (
-      tenant_id, equino_id, proprietario_id, comissionado_id, percentual_comissao,
+      tenant_id, criado_por, equino_id, proprietario_id,
+      comissionado_id, percentual_comissao,
       natureza, categoria, descricao, valor, data_vencimento, status, competencia
     )
     select
       tenant_key,
+      creator_key,
       e.id,
       p_proprietario_id,
       e.treinador_id,
@@ -752,6 +891,7 @@ begin
       on u.id = e.treinador_id and u.tenant_id = e.tenant_id
     where e.tenant_id = tenant_key
       and e.proprietario_id = p_proprietario_id
+      and e.criado_por = creator_key
       and e.valor_mensalidade > 0
       and e.excluido_em is null
     on conflict (tenant_id, equino_id, competencia)
@@ -767,11 +907,12 @@ begin
 
   with inserted as (
     insert into public.financeiro_lancamentos (
-      tenant_id, equino_id, proprietario_id, origem_tratamento_id,
+      tenant_id, criado_por, equino_id, proprietario_id, origem_tratamento_id,
       natureza, categoria, descricao, valor, data_vencimento, status, competencia
     )
     select
       tenant_key,
+      creator_key,
       e.id,
       p_proprietario_id,
       tm.id,
@@ -787,6 +928,7 @@ begin
       on e.id = tm.equino_id and e.tenant_id = tm.tenant_id
     where tm.tenant_id = tenant_key
       and e.proprietario_id = p_proprietario_id
+      and e.criado_por = creator_key
       and tm.cobrar_proprietario
       and tm.custo > 0
       and e.excluido_em is null

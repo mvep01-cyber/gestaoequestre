@@ -66,13 +66,12 @@ export async function POST(request: Request) {
   }
 
   const user = await getCurrentUser();
-  if (!user || !user.tenant_id || user.perfil !== "ADMIN") {
-    return Response.json({ error: "Ação permitida somente a gestores." }, { status: 403 });
+  if (!user) {
+    return Response.json({ error: "Usuário não autorizado." }, { status: 403 });
   }
   if (!isTenantAvailable(user)) {
     return Response.json({ error: "A assinatura está bloqueada." }, { status: 403 });
   }
-
   let form: FormData;
   try {
     form = await request.formData();
@@ -84,6 +83,19 @@ export async function POST(request: Request) {
   const type = form.get("tipo");
   const horseId = form.get("equinoId");
   const entryId = form.get("lancamentoId");
+  const requestedTenantId = form.get("tenantId");
+  const isGlobalAdmin = user.perfil === "ADMIN";
+  const tenantId = isGlobalAdmin
+    ? isUuid(requestedTenantId)
+      ? requestedTenantId
+      : null
+    : user.tenant_id;
+  const isClientAccount =
+    user.perfil === "CLIENTE" &&
+    (user.tipo_cadastro === "CTE" || user.tipo_cadastro === "HARAS");
+  if (!tenantId) {
+    return Response.json({ error: "Selecione um CTE/Haras válido." }, { status: 400 });
+  }
   if (
     !(file instanceof File) ||
     (type !== "EQUINO" && type !== "COMPROVANTE") ||
@@ -93,6 +105,15 @@ export async function POST(request: Request) {
     file.name.length > 200
   ) {
     return Response.json({ error: "Arquivo inválido ou maior que 10 MB." }, { status: 400 });
+  }
+  if (
+    (type === "EQUINO" &&
+      user.perfil !== "ADMIN" &&
+      user.perfil !== "OPERACIONAL" &&
+      !isClientAccount) ||
+    (type === "COMPROVANTE" && !isClientAccount)
+  ) {
+    return Response.json({ error: "Ação não autorizada para este perfil." }, { status: 403 });
   }
   if (
     (type === "EQUINO" && (!isUuid(horseId) || entryId !== null)) ||
@@ -111,9 +132,20 @@ export async function POST(request: Request) {
   const pool = getPool();
   const linkedRecord = await pool.query(
     type === "EQUINO"
-      ? "select id from public.equinos where id = $1 and tenant_id = $2 and excluido_em is null"
-      : "select id from public.financeiro_lancamentos where id = $1 and tenant_id = $2",
-    [type === "EQUINO" ? horseId : entryId, user.tenant_id],
+      ? `select id from public.equinos
+         where id = $1 and tenant_id = $2 and excluido_em is null
+           and ($3::boolean or criado_por = $4)`
+      : `select id from public.financeiro_lancamentos
+         where id = $1 and tenant_id = $2 and criado_por = $3
+           and excluido_em is null`,
+    type === "EQUINO"
+      ? [
+          horseId,
+          tenantId,
+          user.perfil === "ADMIN" || user.perfil === "OPERACIONAL",
+          user.id,
+        ]
+      : [entryId, tenantId, user.id],
   );
   if (!linkedRecord.rowCount) {
     return Response.json({ error: "Registro não encontrado neste centro." }, { status: 404 });
@@ -121,12 +153,12 @@ export async function POST(request: Request) {
 
   const id = randomUUID();
   const extension = allowedTypes[file.type];
-  const relativePath = `${user.tenant_id}/${id}${extension}`;
+  const relativePath = `${tenantId}/${id}${extension}`;
   const absolutePath = path.join(
     process.cwd(),
     "storage",
     "uploads",
-    user.tenant_id,
+    tenantId,
     `${id}${extension}`,
   );
   try {
@@ -146,7 +178,7 @@ export async function POST(request: Request) {
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         id,
-        user.tenant_id,
+        tenantId,
         user.id,
         type,
         path.basename(file.name),

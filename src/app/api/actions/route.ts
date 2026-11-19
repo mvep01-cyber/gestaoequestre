@@ -22,6 +22,20 @@ const clientAccountActions = new Set([
   "deleteHorse",
   "createClient",
   "updateClient",
+  "createFinanceEntry",
+  "updateFinanceEntry",
+  "deleteFinanceEntry",
+  "generateBilling",
+  "payFinanceEntry",
+]);
+
+const financeCategories = new Set([
+  "MENSALIDADE",
+  "REPASSE_EXTRA",
+  "PARCELA_VENDA",
+  "COMISSAO",
+  "ALIMENTACAO_FENO",
+  "OPERACIONAL",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -76,6 +90,24 @@ function parseOptionalText(
 function parseOptionalDate(value: unknown): string | null | undefined {
   if (value === undefined || value === null || value === "") return null;
   return isDateOnly(value) ? value : undefined;
+}
+
+function parseMoney(value: unknown): number | null {
+  const amount =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0 ||
+    amount > 9999999999.99 ||
+    Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-8
+  ) {
+    return null;
+  }
+  return amount;
 }
 
 const horseCoatTypes = [
@@ -480,13 +512,29 @@ export async function POST(request: Request) {
   }
 
   const isManager = user.perfil === "ADMIN";
-  const hasTenant = Boolean(user.tenant_id);
+  const pool = getPool();
+  const tenantId =
+    isManager && isUuid(body.tenantId) ? body.tenantId : user.tenant_id;
+  const hasTenant = Boolean(tenantId);
+  const tenantContext =
+    isManager && tenantId
+      ? await pool.query<{ plano: string }>(
+          "select plano from public.tenants where id = $1",
+          [tenantId],
+        )
+      : null;
+  if (isManager && (!tenantId || !tenantContext?.rowCount)) {
+    return errorResponse("Selecione um CTE/Haras válido.", 400);
+  }
+  const tenantPlan = isManager
+    ? tenantContext?.rows[0]?.plano ?? null
+    : user.plano;
   const isClientAccount =
     user.perfil === "CLIENTE" &&
     (user.tipo_cadastro === "CTE" || user.tipo_cadastro === "HARAS");
   const canManageHorses =
     hasTenant &&
-    (user.perfil === "ADMIN" || user.perfil === "OPERACIONAL" || isClientAccount);
+    (user.perfil === "OPERACIONAL" || isClientAccount);
   const canManageClients =
     hasTenant &&
     (user.perfil === "ADMIN" || user.perfil === "OPERACIONAL" || isClientAccount);
@@ -496,13 +544,11 @@ export async function POST(request: Request) {
   ) {
     return errorResponse("Este acesso não tem permissão para esta ação.", 403);
   }
-  const pool = getPool();
-
   try {
     switch (body.action) {
       case "createHorse": {
         if (!canManageHorses) {
-          return errorResponse("Ação permitida somente a usuários do centro.", 403);
+          return errorResponse("Este perfil não tem permissão para alterar o cadastro de cavalos.", 403);
         }
         const fields = parseHorseInput(body);
         if (!fields) {
@@ -513,7 +559,7 @@ export async function POST(request: Request) {
         }
         const owner = await resolveHorseOwner(
           pool,
-          user.tenant_id!,
+          tenantId!,
           user.id,
           fields.proprietario_id,
           isClientAccount,
@@ -536,7 +582,7 @@ export async function POST(request: Request) {
            )
            returning id`,
           [
-            user.tenant_id,
+            tenantId,
             user.id,
             owner.name,
             owner.id,
@@ -560,7 +606,7 @@ export async function POST(request: Request) {
         );
         const horse = await fetchHorseForResponse(
           pool,
-          user.tenant_id!,
+          tenantId!,
           result.rows[0].id,
           isManager,
           user.id,
@@ -573,7 +619,7 @@ export async function POST(request: Request) {
 
       case "updateHorse": {
         if (!canManageHorses) {
-          return errorResponse("Ação permitida somente a usuários do centro.", 403);
+          return errorResponse("Este perfil não tem permissão para alterar o cadastro de cavalos.", 403);
         }
         if (!isUuid(body.id)) {
           return errorResponse("Cavalo inválido.", 400);
@@ -587,7 +633,7 @@ export async function POST(request: Request) {
         }
         const owner = await resolveHorseOwner(
           pool,
-          user.tenant_id!,
+          tenantId!,
           user.id,
           fields.proprietario_id,
           isClientAccount,
@@ -598,7 +644,12 @@ export async function POST(request: Request) {
         }
         const result = await pool.query<{ id: string }>(
           `update public.equinos
-           set nome_proprietario = $1, proprietario_id = $2,
+           set nome_proprietario = $1,
+               proprietario_id = case
+                 when not $23::boolean and nome_proprietario is not distinct from $1
+                   then proprietario_id
+                 else $2
+               end,
                nome_treinador = $3, nome = $4, foto_url = $5, baia = $6,
                raca = $7, sexo = $8, data_nascimento = $9::date,
                nome_pai = $10, nome_mae = $11, pelagem = $12,
@@ -627,9 +678,10 @@ export async function POST(request: Request) {
             fields.alimentacao_diaria,
             fields.valor_mensalidade,
             body.id,
-            user.tenant_id,
+            tenantId,
             isManager,
             user.id,
+            isClientAccount,
           ],
         );
         if (!result.rowCount) {
@@ -637,7 +689,7 @@ export async function POST(request: Request) {
         }
         const horse = await fetchHorseForResponse(
           pool,
-          user.tenant_id!,
+          tenantId!,
           result.rows[0].id,
           isManager,
           user.id,
@@ -650,7 +702,7 @@ export async function POST(request: Request) {
 
       case "deleteHorse": {
         if (!canManageHorses) {
-          return errorResponse("Ação permitida somente a usuários do centro.", 403);
+          return errorResponse("Este perfil não tem permissão para alterar o cadastro de cavalos.", 403);
         }
         if (!isUuid(body.id)) {
           return errorResponse("Cavalo inválido.", 400);
@@ -661,7 +713,7 @@ export async function POST(request: Request) {
            where id = $1 and tenant_id = $2 and excluido_em is null
              and ($3::boolean or criado_por = $4)
            returning id`,
-          [body.id, user.tenant_id, isManager, user.id],
+          [body.id, tenantId, isManager, user.id],
         );
         if (!result.rowCount) {
           return errorResponse("Cavalo não encontrado neste centro.", 404);
@@ -687,7 +739,7 @@ export async function POST(request: Request) {
                  and ($4::boolean or e.criado_por = $5)
              )
            returning id`,
-          [user.id, body.id, user.tenant_id, isManager, user.id],
+          [user.id, body.id, tenantId, isManager, user.id],
         );
         if (!result.rowCount) {
           return errorResponse("Aplicação não encontrada ou já registrada.", 404);
@@ -711,7 +763,7 @@ export async function POST(request: Request) {
                  and ($3::boolean or e.criado_por = $4)
              )
            returning id`,
-          [body.id, user.tenant_id, isManager, user.id],
+          [body.id, tenantId, isManager, user.id],
         );
         if (!result.rowCount) {
           return errorResponse("Treino não encontrado ou já concluído.", 404);
@@ -720,8 +772,11 @@ export async function POST(request: Request) {
       }
 
       case "updateTenant": {
-        if (user.perfil !== "SUPER_ADMIN" || !isUuid(body.id)) {
-          return errorResponse("Ação permitida somente ao super administrador.", 403);
+        if (
+          (user.perfil !== "SUPER_ADMIN" && user.perfil !== "ADMIN") ||
+          !isUuid(body.id)
+        ) {
+          return errorResponse("Ação permitida somente ao perfil ADMIN.", 403);
         }
         if (
           body.field !== "plano" &&
@@ -749,37 +804,215 @@ export async function POST(request: Request) {
         return Response.json({ updated: true });
       }
 
+      case "createFinanceEntry": {
+        if (!isClientAccount || !hasTenant) {
+          return errorResponse("Apenas o login CTE/Haras pode criar lançamentos próprios.", 403);
+        }
+        const clientId = body.clientId;
+        const descricao = sanitizeText(body.description, 200);
+        const natureza = body.nature;
+        const categoria = body.category;
+        const valor = parseMoney(body.amount);
+        const dataVencimento = body.dueDate;
+        const competencia = parseOptionalDate(body.competence);
+        if (
+          !isUuid(clientId) ||
+          !descricao ||
+          (natureza !== "RECEITA" && natureza !== "DESPESA") ||
+          typeof categoria !== "string" ||
+          !financeCategories.has(categoria) ||
+          valor === null ||
+          !isDateOnly(dataVencimento) ||
+          competencia === undefined
+        ) {
+          return errorResponse("Confira o cliente e os dados do lançamento.", 400);
+        }
+        const client = await pool.query<{ nome: string }>(
+          `select nome from public.proprietarios
+           where id = $1 and tenant_id = $2 and criado_por = $3`,
+          [clientId, tenantId, user.id],
+        );
+        if (!client.rowCount) {
+          return errorResponse("Cliente não encontrado para este login.", 404);
+        }
+        const result = await pool.query<{ id: string }>(
+          `insert into public.financeiro_lancamentos (
+             tenant_id, criado_por, proprietario_id, natureza, categoria,
+             descricao, valor, competencia, data_vencimento, status
+           )
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDENTE')
+           returning id`,
+          [
+            tenantId,
+            user.id,
+            clientId,
+            natureza,
+            categoria,
+            descricao,
+            valor,
+            competencia,
+            dataVencimento,
+          ],
+        );
+        return Response.json(
+          {
+            entry: {
+              id: result.rows[0].id,
+              proprietario_id: clientId,
+              cliente_nome: client.rows[0].nome,
+              descricao,
+              valor,
+              data_vencimento: dataVencimento,
+              natureza,
+              categoria,
+              status: "PENDENTE",
+              competencia,
+            },
+          },
+          { status: 201 },
+        );
+      }
+
+      case "updateFinanceEntry": {
+        if (!isClientAccount || !hasTenant) {
+          return errorResponse("Apenas o login que criou o lançamento pode alterá-lo.", 403);
+        }
+        const clientId = body.clientId;
+        const descricao = sanitizeText(body.description, 200);
+        const natureza = body.nature;
+        const categoria = body.category;
+        const valor = parseMoney(body.amount);
+        const dataVencimento = body.dueDate;
+        const competencia = parseOptionalDate(body.competence);
+        if (
+          !isUuid(body.id) ||
+          !isUuid(clientId) ||
+          !descricao ||
+          (natureza !== "RECEITA" && natureza !== "DESPESA") ||
+          typeof categoria !== "string" ||
+          !financeCategories.has(categoria) ||
+          valor === null ||
+          !isDateOnly(dataVencimento) ||
+          competencia === undefined
+        ) {
+          return errorResponse("Confira o cliente e os dados do lançamento.", 400);
+        }
+        const client = await pool.query<{ nome: string }>(
+          `select nome from public.proprietarios
+           where id = $1 and tenant_id = $2 and criado_por = $3`,
+          [clientId, tenantId, user.id],
+        );
+        if (!client.rowCount) {
+          return errorResponse("Cliente não encontrado para este login.", 404);
+        }
+        const result = await pool.query<{ id: string; status: string }>(
+          `update public.financeiro_lancamentos
+           set proprietario_id = $1, natureza = $2, categoria = $3,
+               descricao = $4, valor = $5, competencia = $6,
+               data_vencimento = $7
+           where id = $8 and tenant_id = $9 and criado_por = $10
+             and excluido_em is null
+           returning id, status`,
+          [
+            clientId,
+            natureza,
+            categoria,
+            descricao,
+            valor,
+            competencia,
+            dataVencimento,
+            body.id,
+            tenantId,
+            user.id,
+          ],
+        );
+        if (!result.rowCount) {
+          return errorResponse("Lançamento não encontrado para este login.", 404);
+        }
+        return Response.json({
+          entry: {
+            id: body.id,
+            proprietario_id: clientId,
+            cliente_nome: client.rows[0].nome,
+            descricao,
+            valor,
+            data_vencimento: dataVencimento,
+            natureza,
+            categoria,
+            status: result.rows[0].status,
+            competencia,
+          },
+        });
+      }
+
+      case "deleteFinanceEntry": {
+        if (!isClientAccount || !hasTenant || !isUuid(body.id)) {
+          return errorResponse("Apenas o login que criou o lançamento pode excluí-lo.", 403);
+        }
+        const result = await pool.query(
+          `update public.financeiro_lancamentos
+           set excluido_em = now()
+           where id = $1 and tenant_id = $2 and criado_por = $3
+             and excluido_em is null
+           returning id`,
+          [body.id, tenantId, user.id],
+        );
+        if (!result.rowCount) {
+          return errorResponse("Lançamento não encontrado para este login.", 404);
+        }
+        return Response.json({ deleted: true });
+      }
+
       case "generateBilling": {
-        if (!isManager || !hasTenant) {
-          return errorResponse("Ação permitida somente a gestores.", 403);
+        if (!isClientAccount || !hasTenant) {
+          return errorResponse("Apenas logins CTE/Haras podem gerar cobranças próprias.", 403);
         }
         if (
           !isUuid(body.ownerId) ||
           typeof body.month !== "string" ||
           !/^\d{4}-(0[1-9]|1[0-2])$/.test(body.month)
         ) {
-          return errorResponse("Proprietário ou competência inválidos.", 400);
+          return errorResponse("Cliente ou competência inválidos.", 400);
+        }
+        const owner = await pool.query(
+          `select 1 from public.proprietarios
+           where id = $1 and tenant_id = $2 and criado_por = $3`,
+          [body.ownerId, tenantId, user.id],
+        );
+        if (!owner.rowCount) {
+          return errorResponse("Cliente não encontrado para este login.", 404);
         }
         const client = await pool.connect();
         try {
           await client.query("begin");
           await client.query(
-            "select public.app_gerar_cobranca_mensal($1, $2, $3::date)",
-            [user.tenant_id, body.ownerId, `${body.month}-01`],
+            "select public.app_gerar_cobranca_mensal($1, $2, $3, $4::date)",
+            [tenantId, body.ownerId, user.id, `${body.month}-01`],
           );
           const entries = await client.query<{
             id: string;
             descricao: string;
             valor: string;
+            data_vencimento: string;
+            natureza: string;
+            categoria: string;
+            status: string;
+            proprietario_id: string;
+            competencia: string | null;
             link_pagamento: string | null;
             pix_copia_cola: string | null;
           }>(
-            `select id, descricao, valor, link_pagamento, pix_copia_cola
+            `select id, descricao, valor,
+                    data_vencimento::text as data_vencimento,
+                    natureza, categoria, status, proprietario_id,
+                    competencia::text as competencia,
+                    link_pagamento, pix_copia_cola
              from public.financeiro_lancamentos
-             where tenant_id = $1 and proprietario_id = $2
-               and competencia = $3::date and status = 'PENDENTE'
+             where tenant_id = $1 and criado_por = $2 and proprietario_id = $3
+               and competencia = $4::date and status = 'PENDENTE'
+               and excluido_em is null
              order by data_vencimento, created_at`,
-            [user.tenant_id, body.ownerId, `${body.month}-01`],
+            [tenantId, user.id, body.ownerId, `${body.month}-01`],
           );
           await client.query("commit");
           return Response.json({
@@ -797,8 +1030,8 @@ export async function POST(request: Request) {
       }
 
       case "payFinanceEntry": {
-        if (!isManager || !hasTenant) {
-          return errorResponse("Ação permitida somente a gestores.", 403);
+        if (!isClientAccount || !hasTenant) {
+          return errorResponse("Apenas o login que criou o lançamento pode dar baixa.", 403);
         }
         if (!isUuid(body.id) || !isUuid(body.accountId)) {
           return errorResponse("Lançamento ou conta inválidos.", 400);
@@ -806,22 +1039,23 @@ export async function POST(request: Request) {
         const result = await pool.query(
           `update public.financeiro_lancamentos
            set status = 'PAGO', data_pagamento = current_date, conta_bancaria_id = $1
-           where id = $2 and tenant_id = $3 and status <> 'PAGO'
+           where id = $2 and tenant_id = $3 and criado_por = $4
+             and status <> 'PAGO' and excluido_em is null
              and exists (
                select 1 from public.contas_bancarias
                where id = $1 and tenant_id = $3
              )
            returning id`,
-          [body.accountId, body.id, user.tenant_id],
+          [body.accountId, body.id, tenantId, user.id],
         );
         if (!result.rowCount) {
-          return errorResponse("Lançamento ou conta não encontrados.", 404);
+          return errorResponse("Lançamento ou conta não encontrados para este login.", 404);
         }
         return Response.json({ updated: true });
       }
 
       case "createCycle": {
-        if (!isManager || !hasTenant || user.plano !== "HARAS") {
+        if (!isManager || !hasTenant || tenantPlan !== "HARAS") {
           return errorResponse("Reprodução está disponível somente para gestores HARAS.", 403);
         }
         if (
@@ -846,7 +1080,7 @@ export async function POST(request: Request) {
           `select id, categoria
            from public.equinos
           where tenant_id = $1 and id = any($2::uuid[]) and excluido_em is null`,
-          [user.tenant_id, horseIds],
+          [tenantId, horseIds],
         );
         const mare = horses.rows.find((horse) => horse.id === body.mareId);
         const sire = horses.rows.find((horse) => horse.id === body.sireId);
@@ -871,7 +1105,7 @@ export async function POST(request: Request) {
              data_cobertura, status, data_previsao_parto, data_parto_real,
              potro_gerado_id`,
           [
-            user.tenant_id,
+            tenantId,
             body.type,
             body.sireId,
             body.mareId,
@@ -893,7 +1127,7 @@ export async function POST(request: Request) {
       }
 
       case "updateCycleStatus": {
-        if (!isManager || !hasTenant || user.plano !== "HARAS") {
+        if (!isManager || !hasTenant || tenantPlan !== "HARAS") {
           return errorResponse("Reprodução está disponível somente para gestores HARAS.", 403);
         }
         if (
@@ -911,7 +1145,7 @@ export async function POST(request: Request) {
                                       else data_parto_real end
            where id = $2 and tenant_id = $3
            returning id`,
-          [body.status, body.id, user.tenant_id],
+          [body.status, body.id, tenantId],
         );
         if (!result.rowCount) {
           return errorResponse("Ciclo não encontrado.", 404);
@@ -938,10 +1172,10 @@ export async function POST(request: Request) {
            values ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, $13::date, $14::date)
            returning id, nome, telefone_whatsapp, documento, cpf, rg,
              data_nascimento::text as data_nascimento, idade, profissao,
-             endereco_completo, numero_socio_abccmm,
+             endereco_completo, numero_socio_abccmm::double precision as numero_socio_abccmm,
              data_inicio::text as data_inicio, data_fim::text as data_fim`,
           [
-            user.tenant_id,
+            tenantId,
             user.id,
             fields.nome,
             fields.telefone_whatsapp,
@@ -983,7 +1217,7 @@ export async function POST(request: Request) {
              and ($15::uuid is null or criado_por = $15)
            returning id, nome, telefone_whatsapp, documento, cpf, rg,
              data_nascimento::text as data_nascimento, idade, profissao,
-             endereco_completo, numero_socio_abccmm,
+             endereco_completo, numero_socio_abccmm::double precision as numero_socio_abccmm,
              data_inicio::text as data_inicio, data_fim::text as data_fim`,
           [
             fields.nome,
@@ -999,7 +1233,7 @@ export async function POST(request: Request) {
             fields.data_inicio,
             fields.data_fim,
             body.id,
-            user.tenant_id,
+            tenantId,
             user.perfil === "ADMIN" ? null : user.id,
           ],
         );
@@ -1083,7 +1317,7 @@ export async function POST(request: Request) {
               dataInicio,
               dataFim,
               safeId,
-              user.tenant_id,
+              tenantId,
             ],
           );
           if (!result.rowCount) {
@@ -1101,7 +1335,7 @@ export async function POST(request: Request) {
            values ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, $13, $14::date, $15::date)
            returning id`,
           [
-            user.tenant_id,
+            tenantId,
             user.id,
             nome,
             typeof body.telefone_whatsapp === "string" ? body.telefone_whatsapp.trim() || null : null,
@@ -1134,7 +1368,7 @@ export async function POST(request: Request) {
           `delete from public.proprietarios
            where id = $1 and tenant_id = $2
            returning id`,
-          [body.id, user.tenant_id],
+          [body.id, tenantId],
         );
         if (!result.rowCount) {
           return errorResponse("Cliente não encontrado.", 404);
@@ -1200,7 +1434,7 @@ export async function POST(request: Request) {
                endereco_completo, numero_socio_abccmm,
                data_inicio::text as data_inicio, data_fim::text as data_fim`,
             [
-              user.tenant_id,
+              tenantId,
               user.id,
               body.tipo_cadastro,
               fields.nome,
@@ -1226,7 +1460,7 @@ export async function POST(request: Request) {
                )
                values ($1, $2, $3, $4, $5, 'CLIENTE')`,
               [
-                user.tenant_id,
+                tenantId,
                 registration.id,
                 fields.nome,
                 accessEmail,
@@ -1312,7 +1546,7 @@ export async function POST(request: Request) {
               fields.data_inicio,
               fields.data_fim,
               body.id,
-              user.tenant_id,
+              tenantId,
             ],
           );
           if (!result.rowCount) {
@@ -1325,7 +1559,7 @@ export async function POST(request: Request) {
             const existingAccess = await client.query(
               `select id from public.usuarios
                where cadastro_cte_haras_id = $1 and tenant_id = $2`,
-              [body.id, user.tenant_id],
+              [body.id, tenantId],
             );
             const duplicate = await client.query(
               `select id from public.usuarios
@@ -1343,7 +1577,7 @@ export async function POST(request: Request) {
                 `update public.usuarios
                  set nome = $1, email = $2, senha_hash = $3, perfil = 'CLIENTE'
                  where id = $4 and tenant_id = $5`,
-                [fields.nome, accessEmail, accessPasswordHash, existingAccess.rows[0].id, user.tenant_id],
+                [fields.nome, accessEmail, accessPasswordHash, existingAccess.rows[0].id, tenantId],
               );
             } else {
               await client.query(
@@ -1351,7 +1585,7 @@ export async function POST(request: Request) {
                    tenant_id, cadastro_cte_haras_id, nome, email, senha_hash, perfil
                  )
                  values ($1, $2, $3, $4, $5, 'CLIENTE')`,
-                [user.tenant_id, body.id, fields.nome, accessEmail, accessPasswordHash],
+                [tenantId, body.id, fields.nome, accessEmail, accessPasswordHash],
               );
             }
           } else {
@@ -1359,7 +1593,7 @@ export async function POST(request: Request) {
               `select email from public.usuarios
                where cadastro_cte_haras_id = $1 and tenant_id = $2
                limit 1`,
-              [body.id, user.tenant_id],
+              [body.id, tenantId],
             );
             accessEmail = existingAccess.rows[0]?.email ?? null;
           }
@@ -1388,7 +1622,7 @@ export async function POST(request: Request) {
           `delete from public.cadastros_cte_haras
            where id = $1 and tenant_id = $2
            returning id`,
-          [body.id, user.tenant_id],
+          [body.id, tenantId],
         );
         if (!result.rowCount) {
           return errorResponse("Cadastro não encontrado.", 404);

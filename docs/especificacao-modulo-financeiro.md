@@ -1,6 +1,6 @@
 # Especificação do módulo Financeiro
 
-**Status:** especificação funcional e de arquitetura; nenhuma base de dados foi criada ou alterada.
+**Status:** Financeiro ADMIN implementado localmente; a interface CTE/Haras ainda precisa ser confrontada com os requisitos. Tratamento de dados legados e políticas operacionais permanecem pendentes.
 **Data:** 19/11/2026
 
 ## 1. Objetivo
@@ -10,7 +10,7 @@ Definir dois módulos financeiros distintos:
 1. **Financeiro CTE/Haras:** dados operacionais dos centros e haras, em uma base compartilhada, com isolamento por tenant e por login.
 2. **Financeiro ADMIN:** dados financeiros próprios da plataforma, em uma base separada da base CTE/Haras.
 
-Os lançamentos, consultas e relatórios de um módulo não devem ser misturados com os do outro. O perfil ADMIN existente administra os acessos de todos os CTEs/Haras e tem acesso amplo às demais funções operacionais desses perfis. Como exceção específica, os lançamentos financeiros CTE/Haras só podem ser consultados, alterados ou excluídos pelo login que os criou; o ADMIN não tem acesso a esses lançamentos. Esta especificação não autoriza criar bases, tabelas, migrações, conexões ou mover dados.
+Os lançamentos, consultas e relatórios de um módulo não devem ser misturados com os do outro. O perfil ADMIN existente administra os acessos de todos os CTEs/Haras e tem acesso amplo às demais funções operacionais desses perfis. Como exceção específica, os lançamentos financeiros CTE/Haras só podem ser consultados, alterados ou excluídos pelo login que os criou; o ADMIN não tem acesso a esses lançamentos. A implementação foi autorizada posteriormente e criou a base financeira ADMIN local separada.
 
 ## 2. Perfis e limites de acesso
 
@@ -22,7 +22,7 @@ Os lançamentos, consultas e relatórios de um módulo não devem ser misturados
 
 Cada lançamento operacional deve ter vínculo obrigatório ao tenant, ao login que o criou e a um cliente da lista vinculada àquele login. O vínculo com um cavalo ou conta bancária não substitui esses vínculos.
 
-**Perfis:** usar o perfil `ADMIN` existente; não criar perfil novo para o Financeiro. O acesso amplo do ADMIN às funções CTE/Haras não se estende aos lançamentos financeiros criados por esses logins. As autorizações atuais da aplicação deverão ser alinhadas a esse requisito antes da implementação.
+**Perfis:** usar o perfil `ADMIN` existente; não criar perfil novo para o Financeiro. O acesso amplo do ADMIN às funções CTE/Haras não se estende aos lançamentos financeiros criados por esses logins.
 
 ## 3. Separação de dados
 
@@ -108,14 +108,17 @@ Mensalidades, parcelas, comissões ou cobranças geradas a partir de outras oper
 8. Usuários sem perfil autorizado recebem bloqueio do servidor, mesmo que chamem diretamente as rotas.
 9. Uma operação em uma base não cria, altera ou replica silenciosamente lançamentos na outra.
 
-## 8. Estado atual e etapas futuras
+## 8. Estado da implementação
 
-O sistema atual possui lançamentos financeiros na base operacional, com `tenant_id`, vínculo a entidades do tenant, contas, vencimento, pagamento e status. O esquema consultado não possui vínculo obrigatório ao login criador nem ao cliente exigido nesta especificação, e o painel atual disponibiliza os lançamentos ao perfil `ADMIN` do tenant. Portanto, a propriedade por login, a seleção obrigatória de cliente, a restrição financeira também para ADMIN e a separação da base financeira da plataforma exigem mudanças posteriores de modelo e autorização.
+A implementação inicial está aplicada no ambiente local:
 
-Antes de qualquer implementação ou criação de bases:
+- A base operacional vincula novos lançamentos ao login criador e a um cliente do mesmo login. As ações operacionais existem no servidor, mas a interface CTE/Haras ainda não oferece todas as ações previstas nesta especificação.
+- As rotas validam o cliente e o lançamento pelo login autenticado; os logins CTE/Haras não consultam nem alteram lançamentos alheios.
+- O Financeiro ADMIN usa `ADMIN_DATABASE_URL`, uma base PostgreSQL local separada, com contas, lançamentos, saldos e auditoria próprios.
+- O perfil `ADMIN` existente opera globalmente, selecionando no painel o tenant para as funções operacionais. Essa seleção não permite consultar ou alterar o Financeiro CTE/Haras.
+- Rotas de comprovantes validam a propriedade do lançamento para logins CTE/Haras; o ADMIN não recebe acesso a esses comprovantes.
+- O Financeiro ADMIN oferece cadastro de contas e lançamentos, alteração, baixa, exclusão lógica, filtros por competência, vencimento, natureza, categoria, status, CTE/Haras e plano, resumo dos valores filtrados e exportação CSV.
+- As rotas de comprovantes em PDF ou imagem validam o acesso do login CTE/Haras ao próprio lançamento; a interface operacional de anexos ainda precisa ser restaurada.
+- `npm run db:setup` e `npm run db:admin-setup` aplicam os esquemas locais. Testes integrados locais cobriram isolamento entre logins, validação do cliente, acesso global ADMIN e separação das bases.
 
-1. manter o acesso amplo do perfil `ADMIN` às demais funções CTE/Haras, mas restringir os lançamentos financeiros ao login criador, sem criar um perfil novo;
-2. aprovar categorias, estados e ações financeiras de cada módulo;
-3. decidir política de estorno/exclusão e retenção de comprovantes;
-4. definir estratégia de migração do financeiro operacional existente e de criação das conexões segregadas;
-5. implementar e testar o isolamento por login para CTE/Haras, o acesso administrativo e a separação entre as bases antes de liberar os módulos.
+Ainda precisam ser definidos: tratamento dos lançamentos legados sem autor/cliente identificável e políticas operacionais de backup, restauração e retenção para as duas bases. Os relatórios atuais são resumos e exportações CSV; relatórios analíticos adicionais podem ser especificados depois.

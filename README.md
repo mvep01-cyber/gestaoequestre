@@ -41,9 +41,23 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
    ```
 
    O esquema está em `database/schema.sql`. A operação é idempotente para o
-   banco local deste projeto.
+   banco operacional deste projeto.
 
-5. Preencha `INITIAL_ADMIN_NAME`, `INITIAL_ADMIN_EMAIL`,
+5. Configure `ADMIN_DATABASE_URL` em `.env.local` com um banco e usuário
+   PostgreSQL dedicados ao Financeiro ADMIN. Para o ambiente local, use um nome
+   de banco diferente de `campovivo`. Execute:
+
+   ```powershell
+   npm run db:admin-setup
+   ```
+
+   O comando prepara o banco e aplica `database/admin-finance-schema.sql`.
+   Localmente, o bootstrap usa `DATABASE_URL`, que precisa ter permissões
+   `CREATEROLE` e `CREATEDB`. Em outros ambientes, configure
+   `ADMIN_DATABASE_BOOTSTRAP_URL` com uma conexão temporária que tenha essas
+   permissões. A aplicação usa somente `ADMIN_DATABASE_URL` em runtime.
+
+6. Preencha `INITIAL_ADMIN_NAME`, `INITIAL_ADMIN_EMAIL`,
    `INITIAL_ADMIN_PASSWORD` (mínimo de 12 caracteres), `INITIAL_TENANT_NAME` e
    `INITIAL_PLAN` em `.env.local`. Crie o primeiro usuário:
 
@@ -51,9 +65,10 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
    npm run db:seed
    ```
 
-   O seed cria um usuário `ADMIN` e um tenant em `TRIAL`. Para criar um
-   `SUPER_ADMIN`, defina `INITIAL_ADMIN_ROLE=SUPER_ADMIN` e execute o seed com
-   um e-mail diferente. Remova os valores `INITIAL_*` de `.env.local` depois.
+   O seed cria um usuário `ADMIN` vinculado ao tenant inicial em `TRIAL`; esse
+   perfil tem acesso global e pode selecionar qualquer tenant no painel. O
+   `SUPER_ADMIN` legado continua sendo uma conta separada. Remova os valores
+   `INITIAL_*` de `.env.local` depois.
 
 6. Inicie o Next.js:
 
@@ -77,6 +92,9 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   instâncias do aplicativo.
 - `DATABASE_URL` é uma credencial exclusivamente de servidor. Não use o prefixo
   `NEXT_PUBLIC_` nem a exponha no navegador.
+- `ADMIN_DATABASE_URL` aponta para a base separada do Financeiro ADMIN e também
+  é exclusivamente de servidor. Não reutilize a base operacional nem exponha
+  esta credencial no navegador.
 - O PostgreSQL local e as senhas padrão do Compose são apenas para desenvolvimento.
   Troque as credenciais e restrinja o acesso antes de qualquer implantação.
 
@@ -86,6 +104,22 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   bcrypt. Não há cadastro público.
 - O banco só é acessado pelo servidor Next.js. Route Handlers validam sessão,
   perfil, plano e tenant e usam consultas parametrizadas.
+- O Financeiro ADMIN usa uma base própria. O Financeiro CTE/Haras permanece na
+  base operacional; os dados financeiros dos dois módulos não são copiados ou
+  combinados.
+- Cada lançamento CTE/Haras é vinculado ao login criador e a um cliente
+  cadastrado por esse login. Somente esse login pode consultar, alterar, baixar
+  ou excluir seu lançamento; o perfil ADMIN não acessa os lançamentos
+  financeiros CTE/Haras.
+- O Financeiro ADMIN oferece cadastro de contas e lançamentos, baixa e exclusão
+  auditadas, filtros por competência, vencimento, natureza, categoria, status,
+  CTE/Haras e plano, resumo dos resultados e exportação CSV.
+- As rotas de comprovantes CTE/Haras validam o acesso pelo servidor. A interface
+  operacional ainda não oferece todos os filtros e ações previstos na especificação.
+- O perfil ADMIN existente tem acesso global às funções operacionais: selecione
+  um tenant no painel para consultar e administrar seus dados e usuários CTE/Haras.
+  Essa seleção não altera o isolamento do Financeiro CTE/Haras nem dá ao ADMIN
+  acesso aos lançamentos operacionais.
 - O perfil OPERACIONAL pode consultar e alterar somente os clientes cadastrados
   pelo próprio usuário, além de cadastrar novos clientes; não pode excluí-los.
   O mesmo cliente pode ser cadastrado separadamente por outro OPERACIONAL.
@@ -96,7 +130,10 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   e clientes e consultar/alterar somente os registros que eles próprios criaram;
   podem excluir somente seus cavalos. O proprietário de um cavalo deve ser um
   cliente do mesmo login. ADMIN pode consultar os registros de todos os usuários
-  do tenant e acessar os módulos disponíveis para o plano.
+  do tenant selecionado e alternar entre os tenants cadastrados.
+- No cadastro de cavalos, ADMIN tem acesso somente à consulta e vê o CTE/Haras
+  responsável por cada registro, quando identificável. A inclusão, alteração e
+  exclusão continuam disponíveis aos perfis CTE/Haras e OPERACIONAL autorizados.
 - Na consulta de clientes, ADMIN vê o vínculo CTE/Haras de cada cadastro. Usuários
   CTE/Haras veem somente os clientes criados pelo próprio login e não recebem
   essa coluna. A consulta, alteração e exclusão de cadastros CTE/Haras ficam

@@ -1,7 +1,13 @@
 import { redirect } from "next/navigation";
 import { Dashboard } from "@/app/dashboard";
+import type { AdminFinanceEntry } from "@/app/admin-finance";
 import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
-import { getPool, isDatabaseConfigured } from "@/lib/db";
+import {
+  getAdminFinancePool,
+  getPool,
+  isAdminFinanceDatabaseConfigured,
+  isDatabaseConfigured,
+} from "@/lib/db";
 
 type HorseRecord = {
   id: string;
@@ -24,6 +30,8 @@ type HorseRecord = {
   alimentacao_diaria?: string | null;
   valor_mensalidade?: number;
   created_at?: string | null;
+  cte_haras_nome?: string | null;
+  cte_haras_tipo?: "CTE" | "HARAS" | null;
 };
 
 type MedicationApplication = {
@@ -86,6 +94,11 @@ type FinanceEntry = {
   natureza: string;
   categoria: string;
   status: string;
+  proprietario_id?: string | null;
+  cliente_nome?: string | null;
+  tenant_id?: string | null;
+  tenant_nome?: string | null;
+  plano?: string | null;
 };
 
 type ReproductionCycle = {
@@ -211,7 +224,11 @@ function SetupNotice({ title, message }: { title: string; message: string }) {
   );
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tenantId?: string | string[] }>;
+}) {
   if (!isDatabaseConfigured()) {
     return (
       <Dashboard
@@ -223,6 +240,7 @@ export default async function DashboardPage() {
         pendingMedicationCount={2}
         todayTrainingCount={3}
         pendingFinanceCount={4}
+        adminFinanceConfigured={false}
         breedingCount={demoCycles.length}
         reproductionCycles={demoCycles}
       />
@@ -255,22 +273,59 @@ export default async function DashboardPage() {
     );
   }
 
-  if (!user.tenant_id || !user.tenant_nome || !user.plano) {
-    return (
-      <SetupNotice
-        title="Seu usuário ainda não está vinculado a um centro."
-        message="Peça ao administrador para conferir o cadastro do seu usuário."
-      />
-    );
-  }
+  const isGlobalAdmin = user.perfil === "ADMIN";
+  let tenantId: string;
+  let tenantName: string;
+  let tenantPlan: string;
+  let managedTenants: TenantRecord[] = [];
 
-  if (!isTenantAvailable(user)) {
-    return (
-      <SetupNotice
-        title="A assinatura está bloqueada."
-        message="Fale com o responsável pelo seu centro para liberar o acesso."
-      />
+  if (isGlobalAdmin) {
+    const tenants = await pool.query<TenantRecord>(
+      `select id, nome, plano, status_assinatura
+       from public.tenants
+       order by nome`,
     );
+    managedTenants = tenants.rows;
+    const params = await searchParams;
+    const requestedTenantId =
+      typeof params.tenantId === "string" ? params.tenantId : null;
+    const selectedTenant =
+      tenants.rows.find((tenant) => tenant.id === requestedTenantId) ??
+      tenants.rows[0];
+    if (!selectedTenant) {
+      return (
+        <SetupNotice
+          title="Nenhum CTE ou Haras cadastrado."
+          message="Cadastre um tenant para começar a administrar os módulos operacionais."
+        />
+      );
+    }
+    if (requestedTenantId !== selectedTenant.id) {
+      redirect(`/dashboard?tenantId=${encodeURIComponent(selectedTenant.id)}`);
+    }
+    tenantId = selectedTenant.id;
+    tenantName = selectedTenant.nome;
+    tenantPlan = selectedTenant.plano;
+  } else {
+    if (!user.tenant_id || !user.tenant_nome || !user.plano) {
+      return (
+        <SetupNotice
+          title="Seu usuário ainda não está vinculado a um centro."
+          message="Peça ao administrador para conferir o cadastro do seu usuário."
+        />
+      );
+    }
+    if (!isTenantAvailable(user)) {
+      return (
+        <SetupNotice
+          title="A assinatura está bloqueada."
+          message="Fale com o responsável pelo seu centro para liberar o acesso."
+        />
+      );
+    }
+    tenantId = user.tenant_id;
+    tenantName = user.tenant_nome;
+    tenantPlan = user.plano;
   }
 
   if (user.perfil === "CLIENTE") {
@@ -283,7 +338,13 @@ export default async function DashboardPage() {
       );
     }
 
-    const [horseResult, clientResult] = await Promise.all([
+    const [
+      horseResult,
+      clientResult,
+      accountResult,
+      financeCountResult,
+      financeResult,
+    ] = await Promise.all([
       pool.query<HorseRecord>(
         `select e.id, e.proprietario_id, e.nome, e.baia, e.raca, e.categoria, e.status,
                   e.nome_pai, e.nome_mae,
@@ -309,6 +370,43 @@ export default async function DashboardPage() {
            order by nome`,
         [user.tenant_id, user.id],
       ),
+      pool.query<PixAccount>(
+        `select id, nome, chave_pix, saldo_atual::double precision as saldo_atual
+         from public.contas_bancarias
+         where tenant_id = $1
+         order by nome`,
+        [user.tenant_id],
+      ),
+      pool.query<{ count: string }>(
+        `select count(*)::text as count
+         from public.financeiro_lancamentos
+         where tenant_id = $1 and criado_por = $2 and excluido_em is null
+           and status in ('PENDENTE', 'ATRASADO')`,
+        [user.tenant_id, user.id],
+      ),
+      pool.query<FinanceEntry>(
+        `select f.id, f.proprietario_id, p.nome as cliente_nome,
+               f.descricao, f.valor::double precision as valor,
+                f.data_vencimento::text as data_vencimento,
+               f.competencia::text as competencia, f.natureza, f.categoria, f.status,
+               comprovante.id as comprovante_id,
+               comprovante.nome_original as comprovante_nome
+         from public.financeiro_lancamentos as f
+         join public.proprietarios as p
+           on p.id = f.proprietario_id and p.tenant_id = f.tenant_id
+              and p.criado_por = f.criado_por
+         left join lateral (
+           select a.id, a.nome_original
+           from public.arquivos as a
+           where a.lancamento_id = f.id and a.tenant_id = f.tenant_id
+           order by a.created_at desc
+           limit 1
+         ) as comprovante on true
+         where f.tenant_id = $1 and f.criado_por = $2 and f.excluido_em is null
+         order by f.data_vencimento, f.created_at desc
+         `,
+        [user.tenant_id, user.id],
+      ),
     ]);
 
     return (
@@ -316,8 +414,8 @@ export default async function DashboardPage() {
         demo={false}
         role={user.perfil}
         clientRegistrationType={user.tipo_cadastro}
-        plan={user.plano}
-        tenantName={user.tenant_nome}
+        plan={tenantPlan}
+        tenantName={tenantName}
         horses={horseResult.rows}
         clients={clientResult.rows.map((client) => ({
           ...client,
@@ -326,12 +424,20 @@ export default async function DashboardPage() {
               ? null
               : Number(client.numero_socio_abccmm),
         }))}
+        billingOwners={clientResult.rows}
+        pixAccounts={accountResult.rows}
+        pendingFinanceCount={Number(financeCountResult.rows[0]?.count ?? 0)}
+        financeEntries={financeResult.rows}
       />
     );
   }
 
-  const tenantId = user.tenant_id;
   const isManager = user.perfil === "ADMIN";
+  const adminFinanceConfigured =
+    isManager && isAdminFinanceDatabaseConfigured();
+  const adminFinancePool = adminFinanceConfigured
+    ? getAdminFinancePool()
+    : null;
   const clientsSelect = `select id, nome, telefone_whatsapp, documento, cpf, rg,
                                 data_nascimento::text as data_nascimento, idade, profissao,
                                 endereco_completo, numero_socio_abccmm,
@@ -407,8 +513,13 @@ export default async function DashboardPage() {
               e.nome_proprietario, e.nome_treinador,
               e.chip_resenha, e.alimentacao_diaria,
               e.valor_mensalidade::double precision as valor_mensalidade,
-              e.created_at::text as created_at
+              e.created_at::text as created_at,
+              c.nome as cte_haras_nome, c.tipo_cadastro as cte_haras_tipo
        from public.equinos as e
+       left join public.usuarios as creator
+         on $2::boolean and creator.id = e.criado_por and creator.tenant_id = e.tenant_id
+       left join public.cadastros_cte_haras as c
+         on c.id = creator.cadastro_cte_haras_id and c.tenant_id = e.tenant_id
        where e.tenant_id = $1 and e.excluido_em is null
          and ($2::boolean or e.criado_por = $3)
        order by e.nome
@@ -466,33 +577,39 @@ export default async function DashboardPage() {
     ownerResultQuery,
     cteHarasRegistrationsQuery,
     isManager
-      ? pool.query<PixAccount & { saldo_atual: string }>(
-          `select id, nome, chave_pix, saldo_atual
-           from public.contas_bancarias
-           where tenant_id = $1
-           order by nome`,
-          [tenantId],
-        )
-      : Promise.resolve({ rows: [] } as { rows: PixAccount[] }),
+      ? adminFinancePool
+        ? adminFinancePool.query<PixAccount>(
+            `select id, nome, chave_pix, saldo_atual::double precision as saldo_atual
+             from public.contas_financeiro_admin
+             where ativo
+             order by nome`,
+          )
+        : Promise.resolve({ rows: [] as PixAccount[] })
+      : Promise.resolve({ rows: [] as PixAccount[] }),
     isManager
-      ? pool.query<{ count: string }>(
-          `select count(*)::text as count
-           from public.financeiro_lancamentos
-           where tenant_id = $1 and status in ('PENDENTE', 'ATRASADO')`,
-          [tenantId],
-        )
+      ? adminFinancePool
+        ? adminFinancePool.query<{ count: string }>(
+            `select count(*)::text as count
+             from public.lancamentos_financeiro_admin
+             where excluido_em is null and status in ('PENDENTE', 'ATRASADO')`,
+          )
+        : Promise.resolve({ rows: [{ count: "0" }] })
       : Promise.resolve({ rows: [{ count: "0" }] }),
     isManager
-      ? pool.query<FinanceEntry & { valor: string }>(
-          `select id, descricao, valor, data_vencimento, natureza, categoria, status
-           from public.financeiro_lancamentos
-           where tenant_id = $1 and status in ('PENDENTE', 'ATRASADO')
-           order by data_vencimento
-           limit 30`,
-          [tenantId],
-        )
-      : Promise.resolve({ rows: [] } as { rows: FinanceEntry[] }),
-    user.plano === "HARAS" && isManager
+      ? adminFinancePool
+        ? adminFinancePool.query<AdminFinanceEntry>(
+            `select id, conta_id, tenant_id, tenant_nome, plano, descricao,
+                    valor::double precision as valor,
+                    data_vencimento::text as data_vencimento,
+                    data_pagamento::text as data_pagamento,
+                    competencia::text as competencia, natureza, categoria, status
+             from public.lancamentos_financeiro_admin
+             where excluido_em is null
+             order by data_vencimento, criado_em desc`,
+          )
+        : Promise.resolve({ rows: [] as AdminFinanceEntry[] })
+      : Promise.resolve({ rows: [] as AdminFinanceEntry[] }),
+    tenantPlan === "HARAS" && isManager
       ? pool.query<{ count: string }>(
           `select count(*)::text as count
            from public.reproducao_ciclos
@@ -500,7 +617,7 @@ export default async function DashboardPage() {
           [tenantId],
         )
       : Promise.resolve({ rows: [{ count: "0" }] }),
-    user.plano === "HARAS" && isManager
+    tenantPlan === "HARAS" && isManager
       ? pool.query<ReproductionCycle & { data_cobertura: string }>(
           `select
              rc.id, rc.tipo, rc.garanhao_id, rc.matriz_id, rc.receptora_id,
@@ -535,14 +652,19 @@ export default async function DashboardPage() {
       demo={false}
       role={user.perfil}
       clientRegistrationType={user.tipo_cadastro}
-      plan={user.plano}
-      tenantName={user.tenant_nome}
+      plan={tenantPlan}
+      tenantName={tenantName}
+      globalAdmin={isGlobalAdmin}
+      selectedTenantId={tenantId}
+      managedTenants={managedTenants}
       horses={horses}
       medicationApplications={medicationApplications}
       todayTrainings={todayTrainings}
       pendingMedicationCount={Number(medicationCountResult.rows[0]?.count ?? 0)}
       todayTrainingCount={Number(trainingCountResult.rows[0]?.count ?? 0)}
       pendingFinanceCount={Number(financeCountResult.rows[0]?.count ?? 0)}
+      adminFinanceConfigured={adminFinanceConfigured}
+      adminFinanceEntries={financeResult.rows}
       breedingCount={Number(cycleCountResult.rows[0]?.count ?? 0)}
       billingOwners={isManager ? ownerResult.rows : []}
       pixAccounts={accountResult.rows.map((row) => ({

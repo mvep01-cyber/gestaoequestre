@@ -1294,6 +1294,83 @@ input:focus-visible {
   color: var(--foreground);
 }
 
+.client-form .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.client-form .checkbox-label::after {
+  content: none;
+}
+
+.client-form .optional-field::after {
+  content: none;
+}
+
+.client-form .checkbox-label input {
+  width: auto;
+  min-height: auto;
+  margin: 0;
+}
+
+.registration-tenant-select {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+  max-width: 360px;
+}
+
+.registration-tenant-select select {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #c1ccc3;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--foreground);
+}
+
+.admin-finance {
+  display: grid;
+  gap: 20px;
+}
+
+.admin-finance-actions,
+.admin-finance-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.admin-finance-summary span {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+}
+
+.admin-finance-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.admin-finance-filters label {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-finance-filters input,
+.admin-finance-filters select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid #c1ccc3;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--foreground);
+}
+
 .client-form-error {
   margin: 0;
   color: var(--danger);

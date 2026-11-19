@@ -10,6 +10,7 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:setup": "node --env-file=.env.local scripts/db-setup.mjs",
+    "db:admin-setup": "node --env-file=.env.local scripts/setup-admin-finance-db.mjs",
     "db:seed": "node --env-file=.env.local scripts/create-admin.mjs",
     "db:user": "node --env-file=.env.local scripts/create-user.mjs"
   },

@@ -51,6 +51,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
 export function isTenantAvailable(user: CurrentUser) {
   return (
     user.perfil === "SUPER_ADMIN" ||
+    user.perfil === "ADMIN" ||
     user.status_assinatura === "TRIAL" ||
     user.status_assinatura === "ATIVO"
   );
