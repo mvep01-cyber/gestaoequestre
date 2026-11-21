@@ -1,6 +1,7 @@
 import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
 import { getPool } from "@/lib/db";
 import { isSameOrigin } from "@/lib/request-security";
+import { isHttpUrl } from "@/lib/url";
 import { hash } from "bcryptjs";
 
 type ReproductionCycle = {
@@ -245,16 +246,6 @@ function parseHorseInput(body: Record<string, unknown>): HorseInput | null {
     alimentacao_diaria: alimentacao.value,
     valor_mensalidade: fee,
   };
-}
-
-function isHttpUrl(value: string | null) {
-  if (value === null) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
 }
 
 function horseCoatValid(value: string | null) {

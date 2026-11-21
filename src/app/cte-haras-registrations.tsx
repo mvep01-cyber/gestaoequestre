@@ -164,7 +164,7 @@ export function CteHarasRegistrations({
   }
 
   async function remove(registration: CteHarasRegistration) {
-    if (!window.confirm(`Excluir o cadastro de ${registration.nome}? O acesso vinculado também será excluído.`)) return;
+    if (!window.confirm(`Excluir o cadastro de ${registration.nome}? O acesso e os produtos vinculados também serão excluídos.`)) return;
     if (demo) {
       setDemoRegistrations((current) => current.filter((item) => item.id !== registration.id));
       setFeedback("Cadastro CTE/Haras excluído.");

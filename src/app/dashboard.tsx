@@ -16,6 +16,7 @@ import {
   HeartPulse,
   Home,
   LogOut,
+  Package,
   Plus,
   Search,
   ShieldCheck,
@@ -30,6 +31,8 @@ import { useMemo, useState, type FormEvent } from "react";
 import { signOut } from "next-auth/react";
 import { CteHarasRegistrations, type CteHarasRegistration } from "./cte-haras-registrations";
 import { AdminFinance, type AdminFinanceEntry, type AdminFinanceRegistration } from "./admin-finance";
+import { Products } from "./products";
+import { isHttpUrl } from "@/lib/url";
 
 type HorseRecord = {
   id: string;
@@ -216,7 +219,7 @@ const clientFormDefaults: ClientFormState = {
   data_fim: "",
 };
 
-type Section = "home" | "horses" | "health" | "schedule" | "breeding" | "finance" | "admin" | "clients" | "cteHarasRegistrations";
+type Section = "home" | "horses" | "health" | "schedule" | "breeding" | "finance" | "admin" | "clients" | "cteHarasRegistrations" | "products";
 
 const demoApplications: MedicationApplication[] = [
   {
@@ -269,6 +272,7 @@ const navItems: {
   { id: "breeding", label: "Reprodução", icon: Dna },
   { id: "finance", label: "Financeiro", icon: Wallet },
   { id: "clients", label: "Clientes", icon: Building2 },
+  { id: "products", label: "Produtos", icon: Package },
   { id: "cteHarasRegistrations", label: "Cadastro CTE/Haras", icon: UsersRound },
   { id: "admin", label: "Plataforma", icon: ShieldCheck },
 ];
@@ -301,6 +305,10 @@ const sectionTitles: Record<Section, { title: string; subtitle: string }> = {
   clients: {
     title: "Clientes",
     subtitle: "Cadastre, consulte e mantenha os dados dos clientes do centro.",
+  },
+  products: {
+    title: "Produtos",
+    subtitle: "Consulte o cadastro e o histórico de vigência dos produtos.",
   },
   cteHarasRegistrations: {
     title: "Cadastro CTE/Haras",
@@ -566,10 +574,10 @@ export function Dashboard({
       navItems.filter((item) => {
         if (isSuperAdmin) return item.id === "admin";
         if (role === "CLIENTE") {
-          return isClientAccount && (item.id === "horses" || item.id === "clients" || item.id === "finance");
+          return isClientAccount && (item.id === "horses" || item.id === "clients" || item.id === "finance" || item.id === "products");
         }
-        if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || item.id === "finance" || item.id === "clients" || item.id === "cteHarasRegistrations";
-        if (item.id === "cteHarasRegistrations") return false;
+        if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || item.id === "finance" || item.id === "clients" || item.id === "cteHarasRegistrations" || item.id === "products";
+        if (item.id === "cteHarasRegistrations" || item.id === "products") return false;
         if (item.id === "breeding") return isHaras && !isOperational;
         if (item.id === "finance") return !isOperational;
         if (item.id === "admin") return isSuperAdmin;
@@ -1332,7 +1340,9 @@ export function Dashboard({
                     <td>{horse.chip_resenha || "—"}</td>
                     <td>{horse.alimentacao_diaria || "—"}</td>
                     <td>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(horse.valor_mensalidade ?? 0)}</td>
-                    <td>{horse.foto_url || "—"}</td>
+                    <td>{horse.foto_url && isHttpUrl(horse.foto_url)
+                      ? <a href={horse.foto_url} target="_blank" rel="noopener noreferrer">{horse.foto_url}</a>
+                      : horse.foto_url || "—"}</td>
                     <td>{formatHorseDate(horse.created_at ?? null)}</td>
                     {canManageHorses && (
                       <td><div className="client-row-actions">
@@ -1940,6 +1950,8 @@ export function Dashboard({
         return renderAdmin();
       case "clients":
         return renderClients();
+      case "products":
+        return isAdmin || isClientAccount ? <Products canCreate={isClientAccount} demo={demo} /> : renderHome();
       case "cteHarasRegistrations":
         return isAdmin ? (
           <CteHarasRegistrations

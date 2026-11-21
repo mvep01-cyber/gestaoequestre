@@ -98,6 +98,26 @@ create table if not exists public.cadastros_cte_haras (
 create index if not exists cadastros_cte_haras_tenant_nome_idx
   on public.cadastros_cte_haras (tenant_id, nome);
 
+create table if not exists public.produtos (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null,
+  cadastro_cte_haras_id uuid not null,
+  criado_por uuid references public.usuarios (id) on delete set null,
+  nome text not null,
+  codigo text not null,
+  marca text not null default '',
+  fabricante text not null default '',
+  descricao text not null default '',
+  valor numeric(12, 2) not null check (valor >= 0),
+  data_inicio date not null,
+  data_fim date not null,
+  created_at timestamptz not null default now(),
+  foreign key (cadastro_cte_haras_id, tenant_id)
+    references public.cadastros_cte_haras (id, tenant_id) on delete cascade,
+  check (data_inicio <= data_fim),
+  unique (cadastro_cte_haras_id, codigo, data_inicio)
+);
+
 alter table if exists public.usuarios
   add column if not exists cadastro_cte_haras_id uuid;
 

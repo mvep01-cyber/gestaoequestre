@@ -147,6 +147,18 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   restritas ao perfil ADMIN.
 - O cadastro separado CTE/Haras usa os mesmos dados do formulário de clientes,
   exige a escolha do tipo e fica disponível somente para usuários ADMIN.
+- Produtos são separados por cadastro CTE/Haras e identificados pelo código.
+  ADMIN pode consultar todos, sem alterá-los. Um novo registro do mesmo código
+  encerra a última vigência na data atual e cria outra para o dia seguinte até
+  31/12/9999; não é possível versionar novamente antes de essa vigência começar.
+  Ao repetir um código, os dados da última versão são preenchidos e apenas
+  descrição e valor podem ser modificados. Essas mesmas informações podem ser
+  alteradas em uma versão futura com fim em 31/12/9999.
+  A versão futura mais recente pode ser excluída somente quando a versão
+  anterior termina hoje; nesse caso, a versão anterior volta a terminar em
+  31/12/9999. Não é possível excluir uma primeira versão futura.
+  Excluir um cadastro CTE/Haras também exclui seus produtos.
+  Execute `npm run db:setup` após atualizar para criar a tabela de produtos.
 - A conta inicial tem perfil `ADMIN`. `SUPER_ADMIN` é criado separadamente pelo
   seed. Para provisionar usuários `ADMIN` ou `OPERACIONAL`, defina
   `USER_NAME`, `USER_EMAIL`, `USER_PASSWORD`, `USER_TENANT_ID` e `USER_ROLE` em
