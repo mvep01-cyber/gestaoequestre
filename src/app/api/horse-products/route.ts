@@ -28,13 +28,14 @@ export async function GET(request: Request) {
       );
       if (!horse.rowCount) return Response.json({ error: "Cavalo não encontrado." }, { status: 404 });
       const selected = await pool.query(
-        `select ep.categoria, p.id as produto_id, p.nome, p.marca, ep.produto_codigo as codigo,
+        `select ep.categoria, p.id as produto_id, p.nome, p.marca, ep.produto_codigo as codigo, ep.produto_subitem as subitem,
                 p.descricao, p.valor::text as valor
          from public.equinos_produtos ep
          join public.equinos e on e.id = ep.equino_id and e.tenant_id = ep.tenant_id
          left join public.produtos p on p.tenant_id = ep.tenant_id
            and p.cadastro_cte_haras_id = ep.produto_cadastro_id
            and p.codigo = ep.produto_codigo
+           and p.subitem = ep.produto_subitem
            and (e.created_at at time zone '${productTimeZone}')::date between p.data_inicio and p.data_fim
          where ep.equino_id = $1 order by ep.categoria`,
         [horseId],
@@ -70,13 +71,13 @@ export async function GET(request: Request) {
     }
     const products = registrationId
       ? await pool.query(
-          `select id, nome, marca, codigo, descricao, valor::text as valor,
+          `select id, nome, marca, codigo, subitem, descricao, valor::text as valor,
                   data_inicio::text as data_inicio, data_fim::text as data_fim,
-                  count(*) over (partition by codigo) > 1 as duplicado
+                  count(*) over (partition by codigo, subitem) > 1 as duplicado
            from public.produtos
            where tenant_id = $1 and cadastro_cte_haras_id = $2
              and ${productTodaySql} between data_inicio and data_fim
-           order by nome, marca, codigo, data_inicio desc, id`,
+           order by nome, marca, codigo, subitem, data_inicio desc, id`,
           [user.tenant_id, registrationId],
         )
       : { rows: [] };

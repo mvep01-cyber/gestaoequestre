@@ -14,6 +14,7 @@ type Product = {
   nome: string;
   marca: string;
   codigo: string;
+  subitem: string;
   descricao: string;
   valor: string;
   data_inicio: string;
@@ -33,6 +34,7 @@ type SavedProduct = {
   nome: string | null;
   marca: string | null;
   codigo: string | null;
+  subitem: string | null;
   descricao: string | null;
   valor: string | null;
 };
@@ -100,7 +102,7 @@ export function HorseProducts({
         {saved?.length ? saved.map((item) => (
           <p key={item.categoria}>
             <strong>{horseProductLabels[item.categoria]}: </strong>
-            {item.produto_id && item.valor !== null ? `${item.nome} — código ${item.codigo} — ${price(item.valor)}` : "Produto indisponível."}
+            {item.produto_id && item.valor !== null ? `${item.nome} — código ${item.codigo} / subitem ${item.subitem} — ${price(item.valor)}` : "Produto indisponível."}
           </p>
         )) : <p>Este cavalo não possui produtos vinculados.</p>}
       </section>
@@ -140,7 +142,7 @@ export function HorseProducts({
         return (
           <div className="horse-product-field" key={slot}>
             <strong>{horseProductLabels[slot]} *</strong>
-            <span>{selected ? `${selected.nome} — código ${selected.codigo} — ${price(selected.valor)}` : "Nenhum produto selecionado"}</span>
+            <span>{selected ? `${selected.nome} — código ${selected.codigo} / subitem ${selected.subitem} — ${price(selected.valor)}` : "Nenhum produto selecionado"}</span>
             <button type="button" className="button button-secondary" disabled={!catalog.cadastroId} onClick={() => {
               setPickerError("");
               setPicker({ slot, group: null });
@@ -175,7 +177,7 @@ export function HorseProducts({
                   onChange({ cadastroId: catalog.cadastroId, ids: nextIds });
                   setPicker(null);
                 }}>
-                  {product.codigo} — {product.descricao || "Sem descrição"} — {price(product.valor)} ({product.data_inicio} a {product.data_fim})
+                  {product.codigo} / {product.subitem} — {product.descricao || "Sem descrição"} — {price(product.valor)} ({product.data_inicio} a {product.data_fim})
                 </button>
               )) : groups.map((product) => (
                 <button type="button" className="button button-secondary" key={JSON.stringify([product.nome, product.marca])}

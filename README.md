@@ -146,9 +146,9 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   primeiro um cadastro CTE/Haras do próprio centro; CTE/Haras usa seus produtos.
   Os valores selecionados são somados na mensalidade, que pode ser alterada
   manualmente e não é recalculada após salvar o cavalo. Mais de um registro
-  vigente para o mesmo código no CTE/Haras impede a inclusão e exige ajuste
+  vigente para o mesmo código e subitem no CTE/Haras impede a inclusão e exige ajuste
   do cadastro de produtos. Na consulta do cavalo, o produto é localizado pelo
-  CTE/Haras, código e data de inclusão do cavalo, sem copiar seu valor.
+  CTE/Haras, código, subitem e data de inclusão do cavalo, sem copiar seu valor.
   As datas de vigência e de inclusão usadas nessas consultas seguem o horário
   de Brasília (`America/Sao_Paulo`), inclusive no cadastro de produtos.
   A alteração dos demais dados de cavalos existentes não
@@ -160,19 +160,26 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   restritas ao perfil ADMIN.
 - O cadastro separado CTE/Haras usa os mesmos dados do formulário de clientes,
   exige a escolha do tipo e fica disponível somente para usuários ADMIN.
-- Produtos são separados por cadastro CTE/Haras e identificados pelo código.
-  ADMIN pode consultar todos, sem alterá-los. Um novo registro do mesmo código
+- Produtos são separados por cadastro CTE/Haras e identificados por código
+  alfanumérico de até cinco caracteres e subitem de dois dígitos. Para um
+  código novo o primeiro subitem é 01; para um código existente, é sugerido
+  o maior subitem mais um, até 99. Nome, marca e fabricante são preenchidos
+  a partir do maior subitem. Para cadastrar uma nova vigência, digite um
+  subitem existente; código e subitem não podem ser alterados após salvar.
+  ADMIN pode consultar todos, sem alterá-los. Um novo registro do mesmo código e subitem
   encerra a última vigência na data atual e cria outra para o dia seguinte até
   31/12/9999; não é possível versionar novamente antes de essa vigência começar.
-  Ao repetir um código, os dados da última versão são preenchidos e apenas
+  Ao repetir um código e subitem, os dados da última versão são preenchidos e apenas
   descrição e valor podem ser modificados. Essas mesmas informações podem ser
   alteradas em uma versão futura com fim em 31/12/9999.
   Uma versão pode ser excluída quando começa depois de hoje e termina em
-  31/12/9999. Após a exclusão, a versão restante de mesmo código com maior
+  31/12/9999. Após a exclusão, a versão restante de mesmo código e subitem com maior
   data de início passa a terminar em 31/12/9999; se não houver outra versão,
   nenhuma atualização adicional é necessária.
   Excluir um cadastro CTE/Haras também exclui seus produtos.
-  Execute `npm run db:setup` após atualizar para criar a tabela de produtos.
+  Execute `npm run db:setup` após atualizar o esquema. Produtos existentes
+  recebem subitem 01; códigos antigos fora do formato permitido devem ser
+  tratados antes da migração, que não os exclui.
 - A conta inicial tem perfil `ADMIN`. `SUPER_ADMIN` é criado separadamente pelo
   seed. Para provisionar usuários `ADMIN` ou `OPERACIONAL`, defina
   `USER_NAME`, `USER_EMAIL`, `USER_PASSWORD`, `USER_TENANT_ID` e `USER_ROLE` em

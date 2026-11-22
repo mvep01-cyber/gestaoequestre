@@ -7,6 +7,7 @@ type Product = {
   id: string;
   nome: string;
   codigo: string;
+  subitem: string;
   marca: string;
   fabricante: string;
   descricao: string;
@@ -21,6 +22,7 @@ type ProductResponse = { products: Product[]; hoje: string; amanha: string };
 type ProductForm = {
   nome: string;
   codigo: string;
+  subitem: string;
   marca: string;
   fabricante: string;
   descricao: string;
@@ -30,7 +32,7 @@ type ProductForm = {
 };
 
 const emptyForm: ProductForm = {
-  nome: "", codigo: "", marca: "", fabricante: "", descricao: "", valor: "",
+  nome: "", codigo: "", subitem: "01", marca: "", fabricante: "", descricao: "", valor: "",
   data_inicio: "", data_fim: "9999-12-31",
 };
 
@@ -69,10 +71,13 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
     return () => { active = false; };
   }, [demo]);
 
-  const existing = !editingId && form && data?.products.find((product) => product.codigo === form.codigo.trim());
-  const locked = Boolean(editingId || existing);
+  const codeProduct = form && data?.products.find((product) => product.codigo === form.codigo.trim());
+  const existing = !editingId && form && data?.products.find((product) =>
+    product.codigo === form.codigo.trim() && product.subitem === form.subitem,
+  );
+  const locked = Boolean(editingId || codeProduct);
   const filtered = (data?.products ?? []).filter((product) =>
-    [product.codigo, product.nome, product.marca, product.fabricante, product.cadastro_nome]
+    [product.codigo, product.subitem, product.nome, product.marca, product.fabricante, product.cadastro_nome]
       .join(" ").toLocaleLowerCase("pt-BR").includes(search.trim().toLocaleLowerCase("pt-BR")),
   );
 
@@ -129,6 +134,7 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
           id: editingId, descricao: form.descricao, valor: form.valor,
         } : {
           ...form,
+          nova_vigencia: Boolean(existing),
           data_inicio: existing ? data.amanha : form.data_inicio,
           data_fim: existing ? "9999-12-31" : form.data_fim,
         }),
@@ -164,11 +170,11 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
       {filtered.length === 0 ? <div className="panel empty-state"><h2>Nenhum produto encontrado</h2></div> : (
         <div className="client-table-wrap">
           <table className="client-table">
-            <thead><tr>{!canCreate && <th>CTE/Haras</th>}<th>Código</th><th>Nome</th><th>Marca</th><th>Fabricante</th><th>Descrição</th><th>Valor</th><th>Início</th><th>Fim</th>{canCreate && <th>Ações</th>}</tr></thead>
+            <thead><tr>{!canCreate && <th>CTE/Haras</th>}<th>Código</th><th>Subitem</th><th>Nome</th><th>Marca</th><th>Fabricante</th><th>Descrição</th><th>Valor</th><th>Início</th><th>Fim</th>{canCreate && <th>Ações</th>}</tr></thead>
             <tbody>{filtered.map((product) => (
               <tr key={product.id}>
                 {!canCreate && <td>{product.cadastro_nome} ({product.tipo_cadastro})</td>}
-                <td>{product.codigo}</td><td>{product.nome}</td><td>{product.marca || "—"}</td><td>{product.fabricante || "—"}</td>
+                <td>{product.codigo}</td><td>{product.subitem}</td><td>{product.nome}</td><td>{product.marca || "—"}</td><td>{product.fabricante || "—"}</td>
                 <td>{product.descricao || "—"}</td><td>{Number(product.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
                 <td>{formatDate(product.data_inicio)}</td><td>{formatDate(product.data_fim)}</td>
                 {canCreate && <td><div className="client-row-actions">
@@ -177,7 +183,7 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
                       setFeedback("");
                       setEditingId(product.id);
                       setForm({
-                        codigo: product.codigo, nome: product.nome, marca: product.marca,
+                        codigo: product.codigo, subitem: product.subitem, nome: product.nome, marca: product.marca,
                         fabricante: product.fabricante, descricao: product.descricao, valor: product.valor,
                         data_inicio: product.data_inicio, data_fim: product.data_fim,
                       });
@@ -205,19 +211,26 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
             </div>
             <form className="client-form" onSubmit={(event) => void submit(event)}>
               <label htmlFor="product-code">Código do produto</label>
-              <input id="product-code" required maxLength={100} readOnly={!!editingId} value={form.codigo} onChange={(event) => {
+              <input id="product-code" required maxLength={5} pattern="[A-Za-z0-9]{1,5}" readOnly={!!editingId} value={form.codigo} onChange={(event) => {
                 const codigo = event.target.value;
                 const product = data.products.find((item) => item.codigo === codigo.trim());
-                if (product) {
-                  setForm({
-                    codigo, nome: product.nome, marca: product.marca, fabricante: product.fabricante,
-                    descricao: product.descricao, valor: product.valor,
-                    data_inicio: data.amanha, data_fim: "9999-12-31",
-                  });
-                } else {
-                  setForm(existing ? { ...emptyForm, codigo, data_inicio: data.hoje } : { ...form, codigo });
-                }
+                const next = product ? Number(product.subitem) + 1 : 1;
+                setForm({
+                  ...emptyForm, codigo, subitem: next <= 99 ? String(next).padStart(2, "0") : "",
+                  nome: product?.nome ?? "", marca: product?.marca ?? "", fabricante: product?.fabricante ?? "",
+                  data_inicio: data.hoje,
+                });
               }} />
+              <label htmlFor="product-subitem">Subitem</label>
+              <input id="product-subitem" required inputMode="numeric" pattern="[0-9]{2}" maxLength={2} readOnly={!!editingId} value={form.subitem} onChange={(event) => {
+                const subitem = event.target.value;
+                const product = data.products.find((item) => item.codigo === form.codigo.trim() && item.subitem === subitem);
+                setForm({
+                  ...form, subitem, descricao: product?.descricao ?? "", valor: product?.valor ?? "",
+                  data_inicio: product ? data.amanha : data.hoje, data_fim: "9999-12-31",
+                });
+              }} />
+              {!editingId && codeProduct?.subitem === "99" && <p>Limite de novos subitens atingido. Informe um subitem existente para criar nova vigência.</p>}
               <label htmlFor="product-name">Nome do produto</label>
               <input id="product-name" required maxLength={200} readOnly={locked} value={form.nome} onChange={(event) => setForm({ ...form, nome: event.target.value })} />
               <label className="optional-field" htmlFor="product-brand">Marca do produto</label>

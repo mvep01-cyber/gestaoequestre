@@ -105,6 +105,7 @@ create table if not exists public.produtos (
   criado_por uuid references public.usuarios (id) on delete set null,
   nome text not null,
   codigo text not null,
+  subitem text not null default '01',
   marca text not null default '',
   fabricante text not null default '',
   descricao text not null default '',
@@ -115,8 +116,30 @@ create table if not exists public.produtos (
   foreign key (cadastro_cte_haras_id, tenant_id)
     references public.cadastros_cte_haras (id, tenant_id) on delete cascade,
   check (data_inicio <= data_fim),
-  unique (cadastro_cte_haras_id, codigo, data_inicio)
+  constraint produtos_codigo_formato_check check (codigo ~ '^[A-Za-z0-9]{1,5}$'),
+  constraint produtos_subitem_formato_check check (subitem ~ '^[0-9]{2}$'),
+  constraint produtos_cadastro_codigo_subitem_inicio_key unique (cadastro_cte_haras_id, codigo, subitem, data_inicio)
 );
+
+alter table public.produtos add column if not exists subitem text;
+update public.produtos set subitem = '01' where subitem is null;
+alter table public.produtos
+  alter column subitem set default '01',
+  alter column subitem set not null,
+  drop constraint if exists produtos_cadastro_cte_haras_id_codigo_data_inicio_key;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_codigo_formato_check') then
+    alter table public.produtos add constraint produtos_codigo_formato_check check (codigo ~ '^[A-Za-z0-9]{1,5}$');
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_subitem_formato_check') then
+    alter table public.produtos add constraint produtos_subitem_formato_check check (subitem ~ '^[0-9]{2}$');
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_cadastro_codigo_subitem_inicio_key') then
+    alter table public.produtos add constraint produtos_cadastro_codigo_subitem_inicio_key unique (cadastro_cte_haras_id, codigo, subitem, data_inicio);
+  end if;
+end $$;
 
 alter table if exists public.usuarios
   add column if not exists cadastro_cte_haras_id uuid;
@@ -257,6 +280,7 @@ create table if not exists public.equinos_produtos (
   categoria text not null check (categoria in ('feno', 'racao', 'baia', 'outros')),
   produto_id uuid references public.produtos (id) on delete set null,
   produto_codigo text,
+  produto_subitem text,
   produto_cadastro_id uuid,
   primary key (equino_id, categoria),
   foreign key (equino_id, tenant_id) references public.equinos (id, tenant_id) on delete cascade
@@ -271,6 +295,12 @@ set produto_codigo = p.codigo, produto_cadastro_id = p.cadastro_cte_haras_id
 from public.produtos p
 where p.id = ep.produto_id
   and (ep.produto_codigo is null or ep.produto_cadastro_id is null);
+
+alter table public.equinos_produtos add column if not exists produto_subitem text;
+update public.equinos_produtos ep
+set produto_subitem = p.subitem
+from public.produtos p
+where p.id = ep.produto_id and ep.produto_subitem is null;
 
 alter table public.equinos
   add column if not exists criado_por uuid references public.usuarios (id) on delete set null,

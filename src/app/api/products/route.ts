@@ -38,13 +38,13 @@ export async function GET() {
   if (!user) return Response.json({ error: "Acesso não autorizado." }, { status: 403 });
   try {
     const result = await getPool().query(
-      `select p.id, p.nome, p.codigo, p.marca, p.fabricante, p.descricao,
+      `select p.id, p.nome, p.codigo, p.subitem, p.marca, p.fabricante, p.descricao,
               p.valor::text as valor, p.data_inicio::text as data_inicio,
               p.data_fim::text as data_fim, c.nome as cadastro_nome, c.tipo_cadastro
        from public.produtos p
        join public.cadastros_cte_haras c on c.id = p.cadastro_cte_haras_id and c.tenant_id = p.tenant_id
        where ($1::uuid is null or p.cadastro_cte_haras_id = $1)
-       order by c.nome, p.codigo, p.data_inicio desc`,
+       order by c.nome, p.codigo, p.subitem desc, p.data_inicio desc`,
       [user.perfil === "ADMIN" ? null : user.cadastro_cte_haras_id],
     );
     const dates = await getPool().query<{ hoje: string; amanha: string }>(
@@ -72,12 +72,15 @@ export async function POST(request: Request) {
   if (typeof body !== "object" || body === null) return Response.json({ error: "Dados inválidos." }, { status: 400 });
   const input = body as Record<string, unknown>;
   const nome = text(input.nome, 200, true);
-  const codigo = text(input.codigo, 100, true);
+  const codigo = text(input.codigo, 5, true);
+  const subitem = text(input.subitem, 2, true);
   const marca = text(input.marca, 200);
   const fabricante = text(input.fabricante, 200);
   const descricao = text(input.descricao, 2000);
   const valor = money(input.valor);
-  if (!nome || !codigo || marca === null || fabricante === null || descricao === null ||
+  if (!nome || !codigo || !/^[A-Za-z0-9]{1,5}$/.test(codigo) || !subitem || !/^[0-9]{2}$/.test(subitem) ||
+      typeof input.nova_vigencia !== "boolean" ||
+      marca === null || fabricante === null || descricao === null ||
       valor === null ||
       !isDate(input.data_inicio) || !isDate(input.data_fim) || input.data_inicio > input.data_fim) {
     return Response.json({ error: "Confira os dados, o valor e as datas de vigência do produto." }, { status: 400 });
@@ -87,15 +90,33 @@ export async function POST(request: Request) {
   try {
     await client.query("begin");
     await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`${user.cadastro_cte_haras_id}:${codigo}`]);
+    const latest = await client.query<{ subitem: string; nome: string; marca: string; fabricante: string }>(
+      `select subitem, nome, marca, fabricante
+       from public.produtos
+       where cadastro_cte_haras_id = $1 and codigo = $2
+       order by subitem desc, data_inicio desc limit 1 for update`,
+      [user.cadastro_cte_haras_id, codigo],
+    );
     const previous = await client.query<{ id: string; nome: string; marca: string; fabricante: string; data_inicio: string; hoje: string; amanha: string }>(
       `select id, nome, marca, fabricante, data_inicio::text as data_inicio, (${productTodaySql})::text as hoje,
               (${productTodaySql} + 1)::text as amanha
        from public.produtos
-       where cadastro_cte_haras_id = $1 and codigo = $2
+       where cadastro_cte_haras_id = $1 and codigo = $2 and subitem = $3
        order by data_inicio desc limit 1 for update`,
-      [user.cadastro_cte_haras_id, codigo],
+      [user.cadastro_cte_haras_id, codigo, subitem],
     );
     const last = previous.rows[0];
+    if (Boolean(last) !== input.nova_vigencia) {
+      await client.query("rollback");
+      return Response.json({ error: "O cadastro de produtos foi alterado. Atualize a lista e tente novamente." }, { status: 409 });
+    }
+    if (!last) {
+      const next = latest.rows[0] ? Number(latest.rows[0].subitem) + 1 : 1;
+      if (next > 99 || Number(subitem) !== next) {
+        await client.query("rollback");
+        return Response.json({ error: next > 99 ? "O limite de subitens foi atingido." : "Informe o próximo subitem sequencial." }, { status: 409 });
+      }
+    }
     if (last && last.data_inicio > last.hoje) {
       await client.query("rollback");
       return Response.json({ error: "A última vigência ainda não começou. Aguarde seu início para cadastrar outra versão." }, { status: 409 });
@@ -105,11 +126,11 @@ export async function POST(request: Request) {
     }
     const result = await client.query(
       `insert into public.produtos
-       (tenant_id, cadastro_cte_haras_id, criado_por, nome, codigo, marca, fabricante, descricao, valor, data_inicio, data_fim)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::date,$11::date)
+       (tenant_id, cadastro_cte_haras_id, criado_por, nome, codigo, subitem, marca, fabricante, descricao, valor, data_inicio, data_fim)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::date,$12::date)
        returning id`,
-      [user.tenant_id, user.cadastro_cte_haras_id, user.id, last ? last.nome : nome, codigo,
-        last ? last.marca : marca, last ? last.fabricante : fabricante, descricao, valor,
+      [user.tenant_id, user.cadastro_cte_haras_id, user.id, (last ?? latest.rows[0])?.nome ?? nome, codigo, subitem,
+        (last ?? latest.rows[0])?.marca ?? marca, (last ?? latest.rows[0])?.fabricante ?? fabricante, descricao, valor,
         last ? last.amanha : input.data_inicio, last ? "9999-12-31" : input.data_fim],
     );
     await client.query("commit");
@@ -185,8 +206,8 @@ export async function DELETE(request: Request) {
   const client = await getPool().connect();
   try {
     await client.query("begin");
-    const lookup = await client.query<{ codigo: string }>(
-      `select codigo from public.produtos
+    const lookup = await client.query<{ codigo: string; subitem: string }>(
+      `select codigo, subitem from public.produtos
        where id = $1 and tenant_id = $2 and cadastro_cte_haras_id = $3`,
       [body.id, user.tenant_id, user.cadastro_cte_haras_id],
     );
@@ -195,14 +216,15 @@ export async function DELETE(request: Request) {
       return Response.json({ error: "Produto não encontrado." }, { status: 404 });
     }
     const codigo = lookup.rows[0].codigo;
+    const subitem = lookup.rows[0].subitem;
     await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`${user.cadastro_cte_haras_id}:${codigo}`]);
     const target = await client.query(
       `select id from public.produtos p
        where p.id = $1 and p.tenant_id = $2 and p.cadastro_cte_haras_id = $3
-         and p.codigo = $4 and p.data_inicio > ${productTodaySql}
+         and p.codigo = $4 and p.subitem = $5 and p.data_inicio > ${productTodaySql}
          and p.data_fim = '9999-12-31'::date
        for update`,
-      [body.id, user.tenant_id, user.cadastro_cte_haras_id, codigo],
+      [body.id, user.tenant_id, user.cadastro_cte_haras_id, codigo, subitem],
     );
     if (!target.rowCount) {
       await client.query("rollback");
@@ -212,9 +234,9 @@ export async function DELETE(request: Request) {
     const remaining = await client.query<{ id: string }>(
       `select id
        from public.produtos
-       where tenant_id = $1 and cadastro_cte_haras_id = $2 and codigo = $3
+       where tenant_id = $1 and cadastro_cte_haras_id = $2 and codigo = $3 and subitem = $4
        order by data_inicio desc limit 1 for update`,
-      [user.tenant_id, user.cadastro_cte_haras_id, codigo],
+      [user.tenant_id, user.cadastro_cte_haras_id, codigo, subitem],
     );
     if (remaining.rows[0]) {
       await client.query("update public.produtos set data_fim = '9999-12-31'::date where id = $1", [remaining.rows[0].id]);

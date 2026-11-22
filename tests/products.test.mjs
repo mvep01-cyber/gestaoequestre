@@ -59,8 +59,22 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
        values ($1,$2,'MIG','Feno',1,current_date,current_date) returning id`,
       [tenant, a],
     )).rows[0].id;
+    await db.query(
+      `alter table produtos drop constraint produtos_codigo_formato_check,
+       drop constraint produtos_subitem_formato_check, drop constraint produtos_cadastro_codigo_subitem_inicio_key,
+       drop column subitem;
+       alter table produtos add constraint produtos_cadastro_cte_haras_id_codigo_data_inicio_key
+       unique (cadastro_cte_haras_id, codigo, data_inicio)`,
+    );
+    const productMigrationStart = schema.indexOf("alter table public.produtos add column if not exists subitem text;");
+    const productMigrationEnd = schema.indexOf("end $$;", productMigrationStart);
+    assert(productMigrationStart >= 0 && productMigrationEnd > productMigrationStart);
+    const productMigration = schema.slice(productMigrationStart, productMigrationEnd + "end $$;".length);
+    await db.query(productMigration);
+    await db.query(productMigration);
+    assert.equal((await db.query("select subitem from produtos where id = $1", [migrationProduct])).rows[0].subitem, "01");
     const migrationHorse = (await db.query("select id from equinos where nome = 'Cavalo legado'")).rows[0].id;
-    await db.query("alter table equinos_produtos drop column produto_codigo, drop column produto_cadastro_id");
+    await db.query("alter table equinos_produtos drop column produto_codigo, drop column produto_cadastro_id, drop column produto_subitem");
     await db.query(
       "insert into equinos_produtos (equino_id,tenant_id,categoria,produto_id) values ($1,$2,'feno',$3)",
       [migrationHorse, tenant, migrationProduct],
@@ -69,10 +83,14 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert(migration);
     await db.query(migration[0]);
     await db.query(migration[0]);
+    const subitemMigration = schema.match(/alter table public\.equinos_produtos add column if not exists produto_subitem text;[\s\S]*?where p\.id = ep\.produto_id and ep\.produto_subitem is null;/);
+    assert(subitemMigration);
+    await db.query(subitemMigration[0]);
+    await db.query(subitemMigration[0]);
     const migrated = (await db.query(
-      "select produto_codigo,produto_cadastro_id from equinos_produtos where equino_id = $1", [migrationHorse],
+      "select produto_codigo,produto_cadastro_id,produto_subitem from equinos_produtos where equino_id = $1", [migrationHorse],
     )).rows[0];
-    assert.deepEqual(migrated, { produto_codigo: "MIG", produto_cadastro_id: a });
+    assert.deepEqual(migrated, { produto_codigo: "MIG", produto_cadastro_id: a, produto_subitem: "01" });
     await db.query("delete from equinos_produtos where equino_id = $1", [migrationHorse]);
     await db.query("delete from produtos where id = $1", [migrationProduct]);
     const dates = (await db.query(
@@ -135,7 +153,7 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal(productDates.hoje, dates.hoje);
     assert.equal(productDates.amanha, dates.amanha);
     const input = {
-      codigo: "P01", nome: "Produto A", marca: "Marca", fabricante: "Fabricante",
+      codigo: "P01", subitem: "01", nova_vigencia: false, nome: "Produto A", marca: "Marca", fabricante: "Fabricante",
       descricao: "Descrição", valor: "12.50", data_inicio: dates.inicio, data_fim: "9999-12-31",
     };
     async function create(request, fields) {
@@ -163,6 +181,10 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await create(clientA, { ...input, data_inicio: "2025-02-30" })).status, 400);
     assert.equal((await create(clientA, { ...input, data_fim: "2000-01-01" })).status, 400);
     assert.equal((await create(clientA, { ...input, valor: "1.999" })).status, 400);
+    assert.equal((await create(clientA, { ...input, codigo: "ABC123" })).status, 400);
+    assert.equal((await create(clientA, { ...input, codigo: "A-1" })).status, 400);
+    assert.equal((await create(clientA, { ...input, subitem: "1" })).status, 400);
+    assert.equal((await create(clientA, { ...input, subitem: "02" })).status, 409);
     assert.equal((await create(clientA, input)).status, 201);
     assert.equal((await create(clientB, { ...input, nome: "Produto B" })).status, 201);
     assert.deepEqual((await (await clientA("/api/products")).json()).products.map((p) => p.nome), ["Produto A"]);
@@ -170,8 +192,8 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await (await admin("/api/products")).json()).products.length, 2);
 
     const simultaneous = await Promise.all([
-      create(clientA, { ...input, nome: "Nome adulterado", marca: "Outra marca", fabricante: "Outro fabricante", descricao: "Versão 2", valor: "20.00" }),
-      create(clientA, { ...input, nome: "Nome concorrente", marca: "Outra marca", fabricante: "Outro fabricante", descricao: "Versão concorrente", valor: "25.00" }),
+      create(clientA, { ...input, nova_vigencia: true, nome: "Nome adulterado", marca: "Outra marca", fabricante: "Outro fabricante", descricao: "Versão 2", valor: "20.00" }),
+      create(clientA, { ...input, nova_vigencia: true, nome: "Nome concorrente", marca: "Outra marca", fabricante: "Outro fabricante", descricao: "Versão concorrente", valor: "25.00" }),
     ]);
     assert.deepEqual(simultaneous.map((r) => r.status).sort(), [201, 409]);
     const products = (await (await clientA("/api/products")).json()).products;
@@ -184,7 +206,7 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert(["Versão 2", "Versão concorrente"].includes(products[0].descricao));
     assert.equal(products[1].data_inicio, dates.inicio);
     assert.equal(products[1].data_fim, dates.hoje);
-    assert.equal((await create(clientA, input)).status, 409);
+    assert.equal((await create(clientA, { ...input, nova_vigencia: true })).status, 409);
     assert.equal((await (await clientB("/api/products")).json()).products[0].data_fim, "9999-12-31");
 
     const changes = { id: products[0].id, descricao: "Descrição alterada", valor: "35.75" };
@@ -192,6 +214,7 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await update(operational, changes)).status, 403);
     assert.equal((await update(clientB, changes)).status, 404);
     assert.equal((await update(clientA, { ...changes, nome: "Tentativa indevida" })).status, 400);
+    assert.equal((await update(clientA, { ...changes, codigo: "TESTE", subitem: "02" })).status, 400);
     assert.equal((await update(clientA, { ...changes, valor: "1.999" })).status, 400);
     assert.equal((await update(clientA, { ...changes, id: products[1].id })).status, 404);
     assert.equal((await clientA("/api/products", {
@@ -206,7 +229,7 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal(updated.valor, changes.valor);
     assert.equal(updated.data_inicio, dates.amanha);
     assert.equal(updated.data_fim, "9999-12-31");
-    const endLimited = await create(clientA, { ...input, codigo: "FUTURO", data_inicio: dates.amanha, data_fim: "9998-12-31" });
+    const endLimited = await create(clientA, { ...input, codigo: "FUTUR", data_inicio: dates.amanha, data_fim: "9998-12-31" });
     assert.equal(endLimited.status, 201);
     const endLimitedId = (await endLimited.json()).id;
     assert.equal((await update(clientA, { ...changes, id: endLimitedId })).status, 404);
@@ -255,10 +278,10 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
 
     const versions = (await db.query(
       `insert into produtos (tenant_id, cadastro_cte_haras_id, codigo, nome, valor, data_inicio, data_fim)
-       values ($1,$2,'SEQUENCIA','Teste',1,current_date - 4,current_date - 2),
-              ($1,$2,'SEQUENCIA','Teste',1,current_date + 1,'9999-12-31'),
-              ($1,$2,'SEQUENCIA','Teste',1,current_date + 3,'9998-12-31'),
-              ($1,$3,'SEQUENCIA','Teste',1,current_date - 1,current_date)
+       values ($1,$2,'SEQ','Teste',1,current_date - 4,current_date - 2),
+              ($1,$2,'SEQ','Teste',1,current_date + 1,'9999-12-31'),
+              ($1,$2,'SEQ','Teste',1,current_date + 3,'9998-12-31'),
+              ($1,$3,'SEQ','Teste',1,current_date - 1,current_date)
        returning id,cadastro_cte_haras_id,data_inicio::text,data_fim::text`,
       [tenant, a, b],
     )).rows;
@@ -276,6 +299,36 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal(afterRemoval.find((item) => item.id === earlier.id).data_fim, earlier.data_fim);
     await db.query("delete from produtos where id = any($1::uuid[])", [versions.map((item) => item.id)]);
 
+    assert.equal((await create(clientA, { ...input, codigo: "IT1" })).status, 201);
+    assert.equal((await create(clientA, { ...input, codigo: "IT1", subitem: "03" })).status, 409);
+    const subitems = await Promise.all([
+      create(clientA, { ...input, codigo: "IT1", subitem: "02", nome: "Nome indevido", marca: "Outra", fabricante: "Outro" }),
+      create(clientA, { ...input, codigo: "IT1", subitem: "02" }),
+    ]);
+    assert.deepEqual(subitems.map((response) => response.status).sort(), [201, 409]);
+    let items = (await (await clientA("/api/products")).json()).products.filter((item) => item.codigo === "IT1");
+    assert.deepEqual(items.map((item) => item.subitem), ["02", "01"]);
+    assert(items.every((item) => item.nome === input.nome && item.marca === input.marca && item.fabricante === input.fabricante));
+    const secondId = items.find((item) => item.subitem === "02").id;
+    await db.query("update produtos set data_fim = current_date + 5 where id = $1", [secondId]);
+    const secondEnd = (await db.query("select data_fim::text as fim from produtos where id = $1", [secondId])).rows[0].fim;
+    const version = await create(clientA, { ...input, codigo: "IT1", nova_vigencia: true });
+    assert.equal(version.status, 201);
+    items = (await (await clientA("/api/products")).json()).products.filter((item) => item.codigo === "IT1");
+    assert.equal(items.find((item) => item.id === secondId).data_fim, secondEnd);
+    assert.equal(items.filter((item) => item.subitem === "01").length, 2);
+    assert.equal((await remove(clientA, (await version.json()).id)).status, 200);
+    assert.equal((await db.query("select data_fim::text as fim from produtos where id = $1", [secondId])).rows[0].fim, secondEnd);
+    await db.query("delete from produtos where cadastro_cte_haras_id = $1 and codigo = 'IT1'", [a]);
+    await db.query(
+      `insert into produtos (tenant_id,cadastro_cte_haras_id,codigo,subitem,nome,valor,data_inicio,data_fim)
+       values ($1,$2,'LIM','99','Teste',1,current_date - 1,'9999-12-31')`,
+      [tenant, a],
+    );
+    assert.equal((await create(clientA, { ...input, codigo: "LIM", subitem: "00" })).status, 409);
+    assert.equal((await create(clientA, { ...input, codigo: "LIM", subitem: "99", nova_vigencia: true })).status, 201);
+    await db.query("delete from produtos where cadastro_cte_haras_id = $1 and codigo = 'LIM'", [a]);
+
     const fixtures = (await db.query(
       `insert into produtos
        (tenant_id, cadastro_cte_haras_id, criado_por, codigo, nome, marca, fabricante, descricao, valor, data_inicio, data_fim)
@@ -290,10 +343,16 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
       [tenant, a, userA],
     )).rows;
     const ids = Object.fromEntries(fixtures.map((product) => [product.codigo, product.id]));
+    const alternative = (await db.query(
+      `insert into produtos (tenant_id,cadastro_cte_haras_id,codigo,subitem,nome,marca,valor,data_inicio,data_fim)
+       values ($1,$2,'FE','02','Feno','Marca',12,current_date - 1,current_date + 1) returning id`,
+      [tenant, a],
+    )).rows[0].id;
     const selection = { feno: ids.FE, racao: ids.RA, baia: ids.BA, outros: ids.OU };
     const catalogA = await (await clientA("/api/horse-products")).json();
     assert(catalogA.products.some((product) => product.id === ids.FE));
     assert(catalogA.products.some((product) => product.id === ids.RA));
+    assert(catalogA.products.filter((product) => product.codigo === "FE").every((product) => !product.duplicado));
     assert(!catalogA.products.some((product) => product.id === ids.FU || product.id === ids.EX));
     assert.equal((await clientB(`/api/horse-products?cadastroId=${a}`)).status, 403);
     assert.equal((await operational(`/api/horse-products?cadastroId=${a}`)).status, 200);
@@ -323,7 +382,8 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
       [tenant, a, userA],
     )).rows[0].id;
     const duplicateCatalog = (await (await clientA("/api/horse-products")).json()).products;
-    assert(duplicateCatalog.filter((item) => item.codigo === "FE").every((item) => item.duplicado));
+    assert(duplicateCatalog.filter((item) => item.codigo === "FE" && item.subitem === "01").every((item) => item.duplicado));
+    assert.equal(duplicateCatalog.find((item) => item.id === alternative).duplicado, false);
     const blockedHorse = await horseAction(clientA, { produto_cadastro_id: a, produtos: selection });
     assert.equal(blockedHorse.status, 409);
     assert.equal((await blockedHorse.json()).error, "Ajuste o cadastro de produtos.");
@@ -371,6 +431,7 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal(timezoneProducts.find((item) => item.categoria === "feno").produto_id, historic);
     assert.match(await (await clientA("/dashboard")).text(), />01\/01\/2025</);
     await db.query("delete from produtos where id = $1", [historic]);
+    await db.query("delete from produtos where id = $1", [alternative]);
     await db.query("update equinos set created_at = now() where id = $1", [horseId]);
     const operationalHorse = await horseAction(operational, { produto_cadastro_id: a, produtos: selection });
     assert.equal(operationalHorse.status, 201);

@@ -590,6 +590,7 @@ export async function POST(request: Request) {
                      where other.tenant_id = p.tenant_id
                        and other.cadastro_cte_haras_id = p.cadastro_cte_haras_id
                        and other.codigo = p.codigo
+                       and other.subitem = p.subitem
                        and ${productTodaySql} between other.data_inicio and other.data_fim) as duplicado
              from public.produtos p
              join public.cadastros_cte_haras c on c.id = p.cadastro_cte_haras_id and c.tenant_id = p.tenant_id
@@ -649,8 +650,8 @@ export async function POST(request: Request) {
           horseId = result.rows[0].id;
           await client.query(
             `insert into public.equinos_produtos
-               (equino_id, tenant_id, categoria, produto_id, produto_codigo, produto_cadastro_id)
-             select $1, $2, selection.categoria, p.id, p.codigo, p.cadastro_cte_haras_id
+               (equino_id, tenant_id, categoria, produto_id, produto_codigo, produto_subitem, produto_cadastro_id)
+             select $1, $2, selection.categoria, p.id, p.codigo, p.subitem, p.cadastro_cte_haras_id
              from unnest($3::text[], $4::uuid[]) as selection(categoria, produto_id)
              join public.produtos p on p.id = selection.produto_id`,
             [horseId, tenantId, selectedProducts.map((item) => item.slot), selectedProducts.map((item) => item.id)],
