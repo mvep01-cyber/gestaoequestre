@@ -33,6 +33,9 @@ import { CteHarasRegistrations, type CteHarasRegistration } from "./cte-haras-re
 import { AdminFinance, type AdminFinanceEntry, type AdminFinanceRegistration } from "./admin-finance";
 import { Products } from "./products";
 import { isHttpUrl } from "@/lib/url";
+import { horseProductSlots, type HorseProductSelection } from "@/lib/horse-products";
+import { productTimeZone } from "@/lib/product-dates";
+import { HorseProducts } from "./horse-products";
 
 type HorseRecord = {
   id: string;
@@ -343,6 +346,14 @@ function formatHorseDate(date: string | null) {
   return year && month && day ? `${day}/${month}/${year}` : date;
 }
 
+function formatHorseRegistrationDate(date: string | null) {
+  if (!date) return "—";
+  const timestamp = new Date(date);
+  return Number.isNaN(timestamp.getTime())
+    ? formatHorseDate(date)
+    : new Intl.DateTimeFormat("pt-BR", { timeZone: productTimeZone }).format(timestamp);
+}
+
 function getTime(date: string) {
   return new Intl.DateTimeFormat("pt-BR", {
     hour: "2-digit",
@@ -548,6 +559,7 @@ export function Dashboard({
   const [horseChip, setHorseChip] = useState("");
   const [horseFeeding, setHorseFeeding] = useState("");
   const [horseMonthlyFee, setHorseMonthlyFee] = useState("0");
+  const [horseProducts, setHorseProducts] = useState<HorseProductSelection | null>(null);
   const [feedback, setFeedback] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [showCycleForm, setShowCycleForm] = useState(false);
@@ -643,6 +655,7 @@ export function Dashboard({
 
   function openHorseForm(horse?: HorseRecord) {
     setFeedback("");
+    setHorseProducts(null);
     setHorseEditingId(horse?.id ?? null);
     setHorseName(horse?.nome ?? "");
     setHorseStable(horse?.baia ?? "");
@@ -682,6 +695,10 @@ export function Dashboard({
       setFeedback("Selecione um proprietário do seu cadastro ou escolha a opção sem proprietário.");
       return;
     }
+    if (!demo && !horseEditingId && (!horseProducts?.cadastroId || horseProductSlots.some((slot) => !horseProducts.ids[slot]))) {
+      setFeedback("Selecione os quatro produtos obrigatórios.");
+      return;
+    }
     setIsSaving(true);
     const fields = {
       nome: horseName.trim(),
@@ -713,6 +730,7 @@ export function Dashboard({
         const result = await postDashboardAction(horseEditingId ? "updateHorse" : "createHorse", {
           ...fields,
           ...(horseEditingId ? { id: horseEditingId } : {}),
+          ...(!horseEditingId && horseProducts ? { produto_cadastro_id: horseProducts.cadastroId, produtos: horseProducts.ids } : {}),
           tenantId: selectedTenantId,
         });
         const horse = isRecord(result) ? result.horse : null;
@@ -1343,7 +1361,7 @@ export function Dashboard({
                     <td>{horse.foto_url && isHttpUrl(horse.foto_url)
                       ? <a href={horse.foto_url} target="_blank" rel="noopener noreferrer">{horse.foto_url}</a>
                       : horse.foto_url || "—"}</td>
-                    <td>{formatHorseDate(horse.created_at ?? null)}</td>
+                    <td>{formatHorseRegistrationDate(horse.created_at ?? null)}</td>
                     {canManageHorses && (
                       <td><div className="client-row-actions">
                         <button className="button button-secondary" disabled={isSaving} onClick={() => openHorseForm(horse)}>Alterar</button>
@@ -2195,6 +2213,7 @@ export function Dashboard({
               <textarea id="horse-feeding" value={horseFeeding} onChange={(event) => setHorseFeeding(event.target.value)} maxLength={1000} rows={3} />
               <label htmlFor="horse-monthly-fee">Mensalidade (R$)</label>
               <input id="horse-monthly-fee" type="number" min="0" max="9999999999.99" step="0.01" value={horseMonthlyFee} onChange={(event) => setHorseMonthlyFee(event.target.value)} />
+              {!demo && <HorseProducts operational={isOperational} horseId={horseEditingId} selection={horseProducts} onChange={setHorseProducts} onTotalChange={setHorseMonthlyFee} />}
               <div className="modal-actions">
                 <button
                   type="button"

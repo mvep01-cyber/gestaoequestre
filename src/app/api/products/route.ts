@@ -1,6 +1,7 @@
 import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
 import { getPool } from "@/lib/db";
 import { isSameOrigin } from "@/lib/request-security";
+import { productTodaySql } from "@/lib/product-dates";
 
 function isDate(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000")) return false;
@@ -47,7 +48,7 @@ export async function GET() {
       [user.perfil === "ADMIN" ? null : user.cadastro_cte_haras_id],
     );
     const dates = await getPool().query<{ hoje: string; amanha: string }>(
-      "select current_date::text as hoje, (current_date + 1)::text as amanha",
+      `select (${productTodaySql})::text as hoje, (${productTodaySql} + 1)::text as amanha`,
     );
     return Response.json({ products: result.rows, ...dates.rows[0] });
   } catch (error) {
@@ -87,8 +88,8 @@ export async function POST(request: Request) {
     await client.query("begin");
     await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`${user.cadastro_cte_haras_id}:${codigo}`]);
     const previous = await client.query<{ id: string; nome: string; marca: string; fabricante: string; data_inicio: string; hoje: string; amanha: string }>(
-      `select id, nome, marca, fabricante, data_inicio::text as data_inicio, current_date::text as hoje,
-              (current_date + 1)::text as amanha
+      `select id, nome, marca, fabricante, data_inicio::text as data_inicio, (${productTodaySql})::text as hoje,
+              (${productTodaySql} + 1)::text as amanha
        from public.produtos
        where cadastro_cte_haras_id = $1 and codigo = $2
        order by data_inicio desc limit 1 for update`,
@@ -100,7 +101,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "A última vigência ainda não começou. Aguarde seu início para cadastrar outra versão." }, { status: 409 });
     }
     if (last) {
-      await client.query("update public.produtos set data_fim = current_date where id = $1", [last.id]);
+      await client.query(`update public.produtos set data_fim = ${productTodaySql} where id = $1`, [last.id]);
     }
     const result = await client.query(
       `insert into public.produtos
@@ -150,7 +151,7 @@ export async function PATCH(request: Request) {
       `update public.produtos
        set descricao = $1, valor = $2
        where id = $3 and tenant_id = $4 and cadastro_cte_haras_id = $5
-         and data_inicio > current_date and data_fim = '9999-12-31'::date
+         and data_inicio > ${productTodaySql} and data_fim = '9999-12-31'::date
        returning id`,
       [descricao, valor, input.id, user.tenant_id, user.cadastro_cte_haras_id],
     );
@@ -195,15 +196,11 @@ export async function DELETE(request: Request) {
     }
     const codigo = lookup.rows[0].codigo;
     await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`${user.cadastro_cte_haras_id}:${codigo}`]);
-    const target = await client.query<{ data_inicio: string }>(
-      `select data_inicio::text as data_inicio from public.produtos p
+    const target = await client.query(
+      `select id from public.produtos p
        where p.id = $1 and p.tenant_id = $2 and p.cadastro_cte_haras_id = $3
-         and p.codigo = $4 and p.data_inicio > current_date
-         and not exists (
-           select 1 from public.produtos newer
-           where newer.cadastro_cte_haras_id = p.cadastro_cte_haras_id
-             and newer.codigo = p.codigo and newer.data_inicio > p.data_inicio
-         )
+         and p.codigo = $4 and p.data_inicio > ${productTodaySql}
+         and p.data_fim = '9999-12-31'::date
        for update`,
       [body.id, user.tenant_id, user.cadastro_cte_haras_id, codigo],
     );
@@ -211,21 +208,19 @@ export async function DELETE(request: Request) {
       await client.query("rollback");
       return Response.json({ error: "Produto não encontrado ou não disponível para exclusão." }, { status: 404 });
     }
-    const previous = await client.query<{ id: string; encerra_hoje: boolean }>(
-      `select id, data_fim = current_date as encerra_hoje
-       from public.produtos
-       where tenant_id = $1 and cadastro_cte_haras_id = $2 and codigo = $3 and data_inicio < $4::date
-       order by data_inicio desc limit 1 for update`,
-      [user.tenant_id, user.cadastro_cte_haras_id, codigo, target.rows[0].data_inicio],
-    );
-    if (!previous.rows[0]?.encerra_hoje) {
-      await client.query("rollback");
-      return Response.json({ error: "A exclusão exige uma versão anterior com fim de vigência hoje." }, { status: 409 });
-    }
     await client.query("delete from public.produtos where id = $1", [body.id]);
-    await client.query("update public.produtos set data_fim = '9999-12-31'::date where id = $1", [previous.rows[0].id]);
+    const remaining = await client.query<{ id: string }>(
+      `select id
+       from public.produtos
+       where tenant_id = $1 and cadastro_cte_haras_id = $2 and codigo = $3
+       order by data_inicio desc limit 1 for update`,
+      [user.tenant_id, user.cadastro_cte_haras_id, codigo],
+    );
+    if (remaining.rows[0]) {
+      await client.query("update public.produtos set data_fim = '9999-12-31'::date where id = $1", [remaining.rows[0].id]);
+    }
     await client.query("commit");
-    return Response.json({ deleted: true });
+    return Response.json({ deleted: true, reactivated: remaining.rowCount === 1 });
   } catch (error) {
     await client.query("rollback");
     console.error("Falha ao excluir produto:", error);

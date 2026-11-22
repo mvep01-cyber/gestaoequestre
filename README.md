@@ -141,6 +141,19 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
 - No cadastro de cavalos, ADMIN tem acesso somente à consulta e vê o CTE/Haras
   responsável por cada registro, quando identificável. A inclusão, alteração e
   exclusão continuam disponíveis aos perfis CTE/Haras e OPERACIONAL autorizados.
+- Na inclusão de um cavalo, selecione quatro produtos vigentes: Feno, Ração,
+  Baia e Outros (nome diferente dos três anteriores). OPERACIONAL seleciona
+  primeiro um cadastro CTE/Haras do próprio centro; CTE/Haras usa seus produtos.
+  Os valores selecionados são somados na mensalidade, que pode ser alterada
+  manualmente e não é recalculada após salvar o cavalo. Mais de um registro
+  vigente para o mesmo código no CTE/Haras impede a inclusão e exige ajuste
+  do cadastro de produtos. Na consulta do cavalo, o produto é localizado pelo
+  CTE/Haras, código e data de inclusão do cavalo, sem copiar seu valor.
+  As datas de vigência e de inclusão usadas nessas consultas seguem o horário
+  de Brasília (`America/Sao_Paulo`), inclusive no cadastro de produtos.
+  A alteração dos demais dados de cavalos existentes não
+  exige preencher produtos antigos. A proteção contra exclusão de produtos
+  vinculados será implementada depois.
 - Na consulta de clientes, ADMIN vê o vínculo CTE/Haras de cada cadastro. Usuários
   CTE/Haras veem somente os clientes criados pelo próprio login e não recebem
   essa coluna. A consulta, alteração e exclusão de cadastros CTE/Haras ficam
@@ -154,9 +167,10 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   Ao repetir um código, os dados da última versão são preenchidos e apenas
   descrição e valor podem ser modificados. Essas mesmas informações podem ser
   alteradas em uma versão futura com fim em 31/12/9999.
-  A versão futura mais recente pode ser excluída somente quando a versão
-  anterior termina hoje; nesse caso, a versão anterior volta a terminar em
-  31/12/9999. Não é possível excluir uma primeira versão futura.
+  Uma versão pode ser excluída quando começa depois de hoje e termina em
+  31/12/9999. Após a exclusão, a versão restante de mesmo código com maior
+  data de início passa a terminar em 31/12/9999; se não houver outra versão,
+  nenhuma atualização adicional é necessária.
   Excluir um cadastro CTE/Haras também exclui seus produtos.
   Execute `npm run db:setup` após atualizar para criar a tabela de produtos.
 - A conta inicial tem perfil `ADMIN`. `SUPER_ADMIN` é criado separadamente pelo

@@ -77,10 +77,7 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
   );
 
   function canDelete(product: Product) {
-    if (!data || product.data_inicio <= data.hoje) return false;
-    const versions = data.products.filter((item) => item.codigo === product.codigo)
-      .sort((a, b) => b.data_inicio.localeCompare(a.data_inicio));
-    return versions[0]?.id === product.id && versions[1]?.data_fim === data.hoje;
+    return Boolean(data && product.data_inicio > data.hoje && product.data_fim === "9999-12-31");
   }
 
   async function refreshAfterChange(message: string) {
@@ -96,7 +93,7 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
 
   async function remove(product: Product) {
     if (!canDelete(product) || saving) return;
-    if (!window.confirm(`Excluir a versão futura de ${product.nome}? A vigência da versão anterior será reativada até 31/12/9999.`)) return;
+    if (!window.confirm(`Excluir a versão futura de ${product.nome}? Se houver outra versão, a de início mais recente terá vigência até 31/12/9999.`)) return;
     setSaving(true);
     setFeedback("");
     try {
@@ -108,7 +105,9 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
       const result = await response.json();
       if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "Não foi possível excluir o produto.");
       if (result.deleted !== true) throw new Error("O servidor não confirmou a exclusão.");
-      await refreshAfterChange("Versão futura excluída e vigência anterior reativada.");
+      await refreshAfterChange(result.reactivated
+        ? "Versão futura excluída e vigência da versão restante atualizada."
+        : "Versão futura excluída.");
     } catch (error) {
       console.error("Falha ao excluir produto:", error);
       setFeedback(error instanceof Error ? error.message : "Não foi possível excluir o produto.");
@@ -188,7 +187,7 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
                     <>
                       <button className="button button-quiet" disabled={saving || !canDelete(product)}
                         onClick={() => void remove(product)}>Excluir</button>
-                      {!canDelete(product) && <small>Exige última versão futura e anterior com fim hoje.</small>}
+                      {!canDelete(product) && <small>Exige fim de vigência em 31/12/9999.</small>}
                     </>
                   )}
                 </div></td>}

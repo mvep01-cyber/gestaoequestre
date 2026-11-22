@@ -251,6 +251,27 @@ create table if not exists public.equinos (
     references public.equinos (id, tenant_id)
 );
 
+create table if not exists public.equinos_produtos (
+  equino_id uuid not null,
+  tenant_id uuid not null,
+  categoria text not null check (categoria in ('feno', 'racao', 'baia', 'outros')),
+  produto_id uuid references public.produtos (id) on delete set null,
+  produto_codigo text,
+  produto_cadastro_id uuid,
+  primary key (equino_id, categoria),
+  foreign key (equino_id, tenant_id) references public.equinos (id, tenant_id) on delete cascade
+);
+
+alter table public.equinos_produtos
+  add column if not exists produto_codigo text,
+  add column if not exists produto_cadastro_id uuid;
+
+update public.equinos_produtos ep
+set produto_codigo = p.codigo, produto_cadastro_id = p.cadastro_cte_haras_id
+from public.produtos p
+where p.id = ep.produto_id
+  and (ep.produto_codigo is null or ep.produto_cadastro_id is null);
+
 alter table public.equinos
   add column if not exists criado_por uuid references public.usuarios (id) on delete set null,
   add column if not exists nome_pai text,

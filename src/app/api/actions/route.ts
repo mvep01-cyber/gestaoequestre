@@ -2,6 +2,8 @@ import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
 import { getPool } from "@/lib/db";
 import { isSameOrigin } from "@/lib/request-security";
 import { isHttpUrl } from "@/lib/url";
+import { horseProductSlot, horseProductSlots } from "@/lib/horse-products";
+import { productTodaySql } from "@/lib/product-dates";
 import { hash } from "bcryptjs";
 
 type ReproductionCycle = {
@@ -548,6 +550,16 @@ export async function POST(request: Request) {
             400,
           );
         }
+        if (!isUuid(body.produto_cadastro_id) || !isRecord(body.produtos) ||
+            (isClientAccount && body.produto_cadastro_id !== user.cadastro_cte_haras_id)) {
+          return errorResponse("Selecione um CTE/Haras e os quatro produtos obrigatórios.", 400);
+        }
+        const productInput = body.produtos;
+        const selectedProducts = horseProductSlots.map((slot) => ({ slot, id: productInput[slot] }));
+        if (selectedProducts.some((item) => !isUuid(item.id)) ||
+            new Set(selectedProducts.map((item) => item.id)).size !== horseProductSlots.length) {
+          return errorResponse("Selecione os quatro produtos obrigatórios.", 400);
+        }
         const owner = await resolveHorseOwner(
           pool,
           tenantId!,
@@ -559,46 +571,101 @@ export async function POST(request: Request) {
         if (!owner) {
           return errorResponse("Proprietário não encontrado no seu cadastro.", 403);
         }
-        const result = await pool.query<{ id: string }>(
-          `insert into public.equinos (
-             tenant_id, criado_por, nome_proprietario, proprietario_id,
-             nome_treinador, nome, foto_url, baia, raca,
-             sexo, data_nascimento, nome_pai, nome_mae, pelagem, categoria, status,
-             registro_associacao, chip_resenha, alimentacao_diaria, valor_mensalidade,
-             origem
-           )
-           values (
-             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, $12,
-             $13, $14, $15, $16, $17, $18, $19, $20, 'PROPRIO'
-           )
-           returning id`,
-          [
-            tenantId,
-            user.id,
-            owner.name,
-            owner.id,
-            fields.nome_treinador,
-            fields.nome,
-            fields.foto_url,
-            fields.baia,
-            fields.raca,
-            fields.sexo,
-            fields.data_nascimento,
-            fields.nome_pai,
-            fields.nome_mae,
-            fields.pelagem,
-            fields.categoria,
-            fields.status,
-            fields.registro_associacao,
-            fields.chip_resenha,
-            fields.alimentacao_diaria,
-            fields.valor_mensalidade,
-          ],
-        );
+        const client = await pool.connect();
+        let horseId: string;
+        try {
+          await client.query("begin");
+          const codes = await client.query<{ codigo: string }>(
+            `select distinct codigo from public.produtos
+             where id = any($1::uuid[]) and tenant_id = $2 and cadastro_cte_haras_id = $3
+             order by codigo`,
+            [selectedProducts.map((item) => item.id), tenantId, body.produto_cadastro_id],
+          );
+          for (const product of codes.rows) {
+            await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`${body.produto_cadastro_id}:${product.codigo}`]);
+          }
+          const products = await client.query<{ id: string; nome: string; codigo: string; duplicado: boolean }>(
+            `select p.id, p.nome, p.codigo,
+                    (select count(*) > 1 from public.produtos other
+                     where other.tenant_id = p.tenant_id
+                       and other.cadastro_cte_haras_id = p.cadastro_cte_haras_id
+                       and other.codigo = p.codigo
+                       and ${productTodaySql} between other.data_inicio and other.data_fim) as duplicado
+             from public.produtos p
+             join public.cadastros_cte_haras c on c.id = p.cadastro_cte_haras_id and c.tenant_id = p.tenant_id
+             where p.id = any($1::uuid[]) and p.tenant_id = $2 and p.cadastro_cte_haras_id = $3
+               and ${productTodaySql} between p.data_inicio and p.data_fim
+             for share of p`,
+            [selectedProducts.map((item) => item.id), tenantId, body.produto_cadastro_id],
+          );
+          if (products.rows.some((product) => product.duplicado)) {
+            await client.query("rollback");
+            return errorResponse("Ajuste o cadastro de produtos.", 409);
+          }
+          if (products.rowCount !== horseProductSlots.length ||
+              selectedProducts.some((item) => {
+                const product = products.rows.find((row) => row.id === item.id);
+                return !product || horseProductSlot(product.nome) !== item.slot;
+              })) {
+            await client.query("rollback");
+            return errorResponse("Os produtos devem pertencer ao CTE/Haras selecionado, estar vigentes e corresponder aos campos.", 400);
+          }
+          const result = await client.query<{ id: string }>(
+            `insert into public.equinos (
+               tenant_id, criado_por, nome_proprietario, proprietario_id,
+               nome_treinador, nome, foto_url, baia, raca,
+               sexo, data_nascimento, nome_pai, nome_mae, pelagem, categoria, status,
+               registro_associacao, chip_resenha, alimentacao_diaria, valor_mensalidade,
+               origem
+             )
+             values (
+               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, $12,
+               $13, $14, $15, $16, $17, $18, $19, $20, 'PROPRIO'
+             )
+             returning id`,
+            [
+              tenantId,
+              user.id,
+              owner.name,
+              owner.id,
+              fields.nome_treinador,
+              fields.nome,
+              fields.foto_url,
+              fields.baia,
+              fields.raca,
+              fields.sexo,
+              fields.data_nascimento,
+              fields.nome_pai,
+              fields.nome_mae,
+              fields.pelagem,
+              fields.categoria,
+              fields.status,
+              fields.registro_associacao,
+              fields.chip_resenha,
+              fields.alimentacao_diaria,
+              fields.valor_mensalidade,
+            ],
+          );
+          horseId = result.rows[0].id;
+          await client.query(
+            `insert into public.equinos_produtos
+               (equino_id, tenant_id, categoria, produto_id, produto_codigo, produto_cadastro_id)
+             select $1, $2, selection.categoria, p.id, p.codigo, p.cadastro_cte_haras_id
+             from unnest($3::text[], $4::uuid[]) as selection(categoria, produto_id)
+             join public.produtos p on p.id = selection.produto_id`,
+            [horseId, tenantId, selectedProducts.map((item) => item.slot), selectedProducts.map((item) => item.id)],
+          );
+          await client.query("commit");
+        } catch (error) {
+          await client.query("rollback");
+          throw error;
+        } finally {
+          client.release();
+        }
         const horse = await fetchHorseForResponse(
           pool,
           tenantId!,
-          result.rows[0].id,
+          horseId,
           isManager,
           user.id,
         );
