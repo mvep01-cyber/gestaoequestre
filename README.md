@@ -106,6 +106,18 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
   bcrypt. Não há cadastro público.
 - O banco só é acessado pelo servidor Next.js. Route Handlers validam sessão,
   perfil, plano e tenant e usam consultas parametrizadas.
+- O cadastro de prestação de serviços pertence a um CTE/Haras. Usuários CLIENTE
+  vinculados ao mesmo cadastro compartilham os prestadores; ADMIN pode consultar
+  e manter os cadastros de todos os centros, selecionando o centro no topo da
+  tela. O complemento do endereço é opcional e limitado a 30 caracteres.
+  Outros perfis não acessam a função.
+- O cadastro de funcionários usa a mesma regra de acesso por CTE/Haras dos
+  prestadores. O valor informado representa a diária ou o mês, conforme o
+  tipo de contratação, e não gera lançamentos financeiros automaticamente.
+- Fornecedores seguem a mesma regra de acesso; cada produto precisa pertencer a
+  um fornecedor do mesmo CTE/Haras. A opção "Ver produtos" filtra a lista pelo
+  fornecedor. Em bancos antigos, produtos sem fornecedor devem ser resolvidos
+  antes de aplicar o esquema; a atualização não os apaga automaticamente.
 - O Financeiro ADMIN usa uma base própria. O Financeiro CTE/Haras permanece na
   base operacional; os dados financeiros dos dois módulos não são copiados ou
   combinados.

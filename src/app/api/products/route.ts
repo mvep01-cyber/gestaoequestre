@@ -39,10 +39,12 @@ export async function GET() {
   try {
     const result = await getPool().query(
       `select p.id, p.nome, p.codigo, p.subitem, p.marca, p.fabricante, p.descricao,
+              p.fornecedor_id, f.nome as fornecedor_nome,
               p.valor::text as valor, p.data_inicio::text as data_inicio,
               p.data_fim::text as data_fim, c.nome as cadastro_nome, c.tipo_cadastro
        from public.produtos p
        join public.cadastros_cte_haras c on c.id = p.cadastro_cte_haras_id and c.tenant_id = p.tenant_id
+       join public.fornecedores f on f.id = p.fornecedor_id and f.cadastro_cte_haras_id = p.cadastro_cte_haras_id and f.tenant_id = p.tenant_id
        where ($1::uuid is null or p.cadastro_cte_haras_id = $1)
        order by c.nome, p.codigo, p.subitem desc, p.data_inicio desc`,
       [user.perfil === "ADMIN" ? null : user.cadastro_cte_haras_id],
@@ -50,7 +52,12 @@ export async function GET() {
     const dates = await getPool().query<{ hoje: string; amanha: string }>(
       `select (${productTodaySql})::text as hoje, (${productTodaySql} + 1)::text as amanha`,
     );
-    return Response.json({ products: result.rows, ...dates.rows[0] });
+    const suppliers = await getPool().query(
+      `select id, nome, cadastro_cte_haras_id from public.fornecedores
+       where ($1::uuid is null or cadastro_cte_haras_id = $1) order by nome, id`,
+      [user.perfil === "ADMIN" ? null : user.cadastro_cte_haras_id],
+    );
+    return Response.json({ products: result.rows, suppliers: suppliers.rows, ...dates.rows[0] });
   } catch (error) {
     console.error("Falha ao consultar produtos:", error);
     return Response.json({ error: "Não foi possível consultar os produtos. Verifique a configuração do banco de dados." }, { status: 500 });
@@ -79,6 +86,7 @@ export async function POST(request: Request) {
   const descricao = text(input.descricao, 2000);
   const valor = money(input.valor);
   if (!nome || !codigo || !/^[A-Za-z0-9]{1,5}$/.test(codigo) || !subitem || !/^[0-9]{2}$/.test(subitem) ||
+      !isUuid(input.fornecedor_id) ||
       typeof input.nova_vigencia !== "boolean" ||
       marca === null || fabricante === null || descricao === null ||
       valor === null ||
@@ -89,6 +97,14 @@ export async function POST(request: Request) {
   const client = await getPool().connect();
   try {
     await client.query("begin");
+    const supplier = await client.query(
+      "select id from public.fornecedores where id = $1 and cadastro_cte_haras_id = $2 and tenant_id = $3",
+      [input.fornecedor_id, user.cadastro_cte_haras_id, user.tenant_id],
+    );
+    if (!supplier.rowCount) {
+      await client.query("rollback");
+      return Response.json({ error: "Selecione um fornecedor do seu CTE/Haras." }, { status: 400 });
+    }
     await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`${user.cadastro_cte_haras_id}:${codigo}`]);
     const latest = await client.query<{ subitem: string; nome: string; marca: string; fabricante: string }>(
       `select subitem, nome, marca, fabricante
@@ -126,12 +142,12 @@ export async function POST(request: Request) {
     }
     const result = await client.query(
       `insert into public.produtos
-       (tenant_id, cadastro_cte_haras_id, criado_por, nome, codigo, subitem, marca, fabricante, descricao, valor, data_inicio, data_fim)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::date,$12::date)
+       (tenant_id, cadastro_cte_haras_id, criado_por, nome, codigo, subitem, marca, fabricante, descricao, valor, data_inicio, data_fim, fornecedor_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::date,$12::date,$13)
        returning id`,
       [user.tenant_id, user.cadastro_cte_haras_id, user.id, (last ?? latest.rows[0])?.nome ?? nome, codigo, subitem,
         (last ?? latest.rows[0])?.marca ?? marca, (last ?? latest.rows[0])?.fabricante ?? fabricante, descricao, valor,
-        last ? last.amanha : input.data_inicio, last ? "9999-12-31" : input.data_fim],
+        last ? last.amanha : input.data_inicio, last ? "9999-12-31" : input.data_fim, input.fornecedor_id],
     );
     await client.query("commit");
     return Response.json({ id: result.rows[0].id }, { status: 201 });

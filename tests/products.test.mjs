@@ -37,6 +37,22 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     }
     const a = await registration("Centro A", "CTE");
     const b = await registration("Centro B", "HARAS");
+    const supplierA = (await db.query("insert into fornecedores (tenant_id,cadastro_cte_haras_id,nome) values ($1,$2,'Fornecedor A') returning id", [tenant, a])).rows[0].id;
+    const supplierB = (await db.query("insert into fornecedores (tenant_id,cadastro_cte_haras_id,nome) values ($1,$2,'Fornecedor B') returning id", [tenant, b])).rows[0].id;
+    await db.query("alter table produtos alter column fornecedor_id drop not null");
+    const unassigned = (await db.query(
+      "insert into produtos (tenant_id,cadastro_cte_haras_id,codigo,nome,valor,data_inicio,data_fim) values ($1,$2,'SEM','Sem fornecedor',1,current_date,current_date) returning id",
+      [tenant, a],
+    )).rows[0].id;
+    const supplierMigrationStart = schema.indexOf("alter table public.produtos add column if not exists fornecedor_id uuid;");
+    const supplierMigrationEnd = schema.indexOf("alter table public.produtos add column if not exists subitem text;", supplierMigrationStart);
+    assert(supplierMigrationStart >= 0 && supplierMigrationEnd > supplierMigrationStart);
+    const supplierMigration = schema.slice(supplierMigrationStart, supplierMigrationEnd);
+    await assert.rejects(db.query(supplierMigration), { code: "23502" });
+    assert.equal((await db.query("select id from produtos where id=$1", [unassigned])).rowCount, 1);
+    await db.query("delete from produtos where id=$1", [unassigned]);
+    await db.query(supplierMigration);
+    await db.query(supplierMigration);
     async function user(email, role, registrationId = null) {
       return (await db.query(
         "insert into usuarios (tenant_id,cadastro_cte_haras_id,nome,email,senha_hash,perfil) values ($1,$2,$3,$3,$4,$5) returning id",
@@ -55,9 +71,9 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
       [tenant, userA],
     );
     const migrationProduct = (await db.query(
-      `insert into produtos (tenant_id, cadastro_cte_haras_id, codigo, nome, valor, data_inicio, data_fim)
-       values ($1,$2,'MIG','Feno',1,current_date,current_date) returning id`,
-      [tenant, a],
+      `insert into produtos (tenant_id, cadastro_cte_haras_id, fornecedor_id, codigo, nome, valor, data_inicio, data_fim)
+       values ($1,$2,$3,'MIG','Feno',1,current_date,current_date) returning id`,
+      [tenant, a, supplierA],
     )).rows[0].id;
     await db.query(
       `alter table produtos drop constraint produtos_codigo_formato_check,
@@ -154,7 +170,7 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal(productDates.amanha, dates.amanha);
     const input = {
       codigo: "P01", subitem: "01", nova_vigencia: false, nome: "Produto A", marca: "Marca", fabricante: "Fabricante",
-      descricao: "Descrição", valor: "12.50", data_inicio: dates.inicio, data_fim: "9999-12-31",
+      descricao: "Descrição", valor: "12.50", data_inicio: dates.inicio, data_fim: "9999-12-31", fornecedor_id: supplierA,
     };
     async function create(request, fields) {
       return request("/api/products", {
@@ -184,9 +200,20 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await create(clientA, { ...input, codigo: "ABC123" })).status, 400);
     assert.equal((await create(clientA, { ...input, codigo: "A-1" })).status, 400);
     assert.equal((await create(clientA, { ...input, subitem: "1" })).status, 400);
+    assert.equal((await create(clientA, { ...input, fornecedor_id: "" })).status, 400);
+    assert.equal((await create(clientA, { ...input, fornecedor_id: supplierB })).status, 400);
     assert.equal((await create(clientA, { ...input, subitem: "02" })).status, 409);
     assert.equal((await create(clientA, input)).status, 201);
-    assert.equal((await create(clientB, { ...input, nome: "Produto B" })).status, 201);
+    assert.equal((await create(clientB, { ...input, nome: "Produto B", fornecedor_id: supplierB })).status, 201);
+    const suppliersA = (await (await clientA("/api/suppliers")).json()).suppliers;
+    assert.equal(suppliersA[0].id, supplierA);
+    assert.equal(suppliersA[0].produtos, 1);
+    assert.equal((await (await clientA("/api/products")).json()).products[0].fornecedor_id, supplierA);
+    await assert.rejects(db.query(
+      `insert into produtos (tenant_id,cadastro_cte_haras_id,fornecedor_id,codigo,nome,valor,data_inicio,data_fim)
+       values ($1,$2,$3,'ERR','Erro',1,current_date,current_date)`,
+      [tenant, a, supplierB],
+    ), { code: "23503" });
     assert.deepEqual((await (await clientA("/api/products")).json()).products.map((p) => p.nome), ["Produto A"]);
     assert.deepEqual((await (await clientB("/api/products")).json()).products.map((p) => p.nome), ["Produto B"]);
     assert.equal((await (await admin("/api/products")).json()).products.length, 2);
@@ -251,10 +278,10 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
 
     const older = (await db.query(
       `insert into produtos
-       (tenant_id, cadastro_cte_haras_id, criado_por, codigo, nome, marca, fabricante, descricao, valor, data_inicio, data_fim)
-       values ($1,$2,$3,'P01','Produto A','Marca','Fabricante','Histórico antigo',10,$4::date - 2,$4::date - 1)
+       (tenant_id, cadastro_cte_haras_id, criado_por, codigo, nome, marca, fabricante, descricao, valor, data_inicio, data_fim, fornecedor_id)
+       values ($1,$2,$3,'P01','Produto A','Marca','Fabricante','Histórico antigo',10,$4::date - 2,$4::date - 1,$5)
        returning id`,
-      [tenant, a, userA, dates.inicio],
+      [tenant, a, userA, dates.inicio, supplierA],
     )).rows[0].id;
     await db.query("update produtos set data_fim = current_date - 1 where id = $1", [products[1].id]);
     await db.query("update produtos set data_fim = '9998-12-31' where id = $1", [products[0].id]);
@@ -277,13 +304,13 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.deepEqual(await singleDeletion.json(), { deleted: true, reactivated: false });
 
     const versions = (await db.query(
-      `insert into produtos (tenant_id, cadastro_cte_haras_id, codigo, nome, valor, data_inicio, data_fim)
-       values ($1,$2,'SEQ','Teste',1,current_date - 4,current_date - 2),
-              ($1,$2,'SEQ','Teste',1,current_date + 1,'9999-12-31'),
-              ($1,$2,'SEQ','Teste',1,current_date + 3,'9998-12-31'),
-              ($1,$3,'SEQ','Teste',1,current_date - 1,current_date)
+      `insert into produtos (tenant_id, cadastro_cte_haras_id, codigo, nome, valor, data_inicio, data_fim, fornecedor_id)
+       values ($1,$2,'SEQ','Teste',1,current_date - 4,current_date - 2,$4),
+              ($1,$2,'SEQ','Teste',1,current_date + 1,'9999-12-31',$4),
+              ($1,$2,'SEQ','Teste',1,current_date + 3,'9998-12-31',$4),
+              ($1,$3,'SEQ','Teste',1,current_date - 1,current_date,$5)
        returning id,cadastro_cte_haras_id,data_inicio::text,data_fim::text`,
-      [tenant, a, b],
+      [tenant, a, b, supplierA, supplierB],
     )).rows;
     const target = versions.find((item) => item.cadastro_cte_haras_id === a && item.data_fim === "9999-12-31");
     const latest = versions.find((item) => item.cadastro_cte_haras_id === a && item.data_fim === "9998-12-31");
@@ -321,9 +348,9 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await db.query("select data_fim::text as fim from produtos where id = $1", [secondId])).rows[0].fim, secondEnd);
     await db.query("delete from produtos where cadastro_cte_haras_id = $1 and codigo = 'IT1'", [a]);
     await db.query(
-      `insert into produtos (tenant_id,cadastro_cte_haras_id,codigo,subitem,nome,valor,data_inicio,data_fim)
-       values ($1,$2,'LIM','99','Teste',1,current_date - 1,'9999-12-31')`,
-      [tenant, a],
+      `insert into produtos (tenant_id,cadastro_cte_haras_id,codigo,subitem,nome,valor,data_inicio,data_fim,fornecedor_id)
+       values ($1,$2,'LIM','99','Teste',1,current_date - 1,'9999-12-31',$3)`,
+      [tenant, a, supplierA],
     );
     assert.equal((await create(clientA, { ...input, codigo: "LIM", subitem: "00" })).status, 409);
     assert.equal((await create(clientA, { ...input, codigo: "LIM", subitem: "99", nova_vigencia: true })).status, 201);
@@ -331,22 +358,22 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
 
     const fixtures = (await db.query(
       `insert into produtos
-       (tenant_id, cadastro_cte_haras_id, criado_por, codigo, nome, marca, fabricante, descricao, valor, data_inicio, data_fim)
+       (tenant_id, cadastro_cte_haras_id, criado_por, codigo, nome, marca, fabricante, descricao, valor, data_inicio, data_fim, fornecedor_id)
        values
-         ($1,$2,$3,'FE','Feno','Marca','Fabricante','Feno vigente',10,current_date - 1,current_date),
-         ($1,$2,$3,'RA','Ração','Marca','Fabricante','Ração vigente',20,current_date,current_date),
-         ($1,$2,$3,'BA','Baia','Marca','Fabricante','Baia vigente',30,current_date,current_date + 1),
-         ($1,$2,$3,'OU','Suplemento','Marca','Fabricante','Outro vigente',40,current_date - 1,current_date + 1),
-         ($1,$2,$3,'FU','Feno','Marca','Fabricante','Futuro',50,current_date + 1,'9999-12-31'),
-         ($1,$2,$3,'EX','Feno','Marca','Fabricante','Expirado',60,current_date - 2,current_date - 1)
+         ($1,$2,$3,'FE','Feno','Marca','Fabricante','Feno vigente',10,current_date - 1,current_date,$4),
+         ($1,$2,$3,'RA','Ração','Marca','Fabricante','Ração vigente',20,current_date,current_date,$4),
+         ($1,$2,$3,'BA','Baia','Marca','Fabricante','Baia vigente',30,current_date,current_date + 1,$4),
+         ($1,$2,$3,'OU','Suplemento','Marca','Fabricante','Outro vigente',40,current_date - 1,current_date + 1,$4),
+         ($1,$2,$3,'FU','Feno','Marca','Fabricante','Futuro',50,current_date + 1,'9999-12-31',$4),
+         ($1,$2,$3,'EX','Feno','Marca','Fabricante','Expirado',60,current_date - 2,current_date - 1,$4)
        returning id,codigo`,
-      [tenant, a, userA],
+      [tenant, a, userA, supplierA],
     )).rows;
     const ids = Object.fromEntries(fixtures.map((product) => [product.codigo, product.id]));
     const alternative = (await db.query(
-      `insert into produtos (tenant_id,cadastro_cte_haras_id,codigo,subitem,nome,marca,valor,data_inicio,data_fim)
-       values ($1,$2,'FE','02','Feno','Marca',12,current_date - 1,current_date + 1) returning id`,
-      [tenant, a],
+      `insert into produtos (tenant_id,cadastro_cte_haras_id,codigo,subitem,nome,marca,valor,data_inicio,data_fim,fornecedor_id)
+       values ($1,$2,'FE','02','Feno','Marca',12,current_date - 1,current_date + 1,$3) returning id`,
+      [tenant, a, supplierA],
     )).rows[0].id;
     const selection = { feno: ids.FE, racao: ids.RA, baia: ids.BA, outros: ids.OU };
     const catalogA = await (await clientA("/api/horse-products")).json();
@@ -376,10 +403,10 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await db.query("select count(*)::int as total from equinos")).rows[0].total, horseCount);
     const duplicate = (await db.query(
       `insert into produtos
-       (tenant_id, cadastro_cte_haras_id, criado_por, codigo, nome, marca, descricao, valor, data_inicio, data_fim)
-       values ($1,$2,$3,'FE','Outro nome','Outra marca','Duplicado',11,current_date,current_date + 1)
+       (tenant_id, cadastro_cte_haras_id, criado_por, codigo, nome, marca, descricao, valor, data_inicio, data_fim, fornecedor_id)
+       values ($1,$2,$3,'FE','Outro nome','Outra marca','Duplicado',11,current_date,current_date + 1,$4)
        returning id`,
-      [tenant, a, userA],
+      [tenant, a, userA, supplierA],
     )).rows[0].id;
     const duplicateCatalog = (await (await clientA("/api/horse-products")).json()).products;
     assert(duplicateCatalog.filter((item) => item.codigo === "FE" && item.subitem === "01").every((item) => item.duplicado));
@@ -390,9 +417,9 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await db.query("select count(*)::int as total from equinos")).rows[0].total, horseCount);
     await db.query("delete from produtos where id = $1", [duplicate]);
     await db.query(
-      `insert into produtos (tenant_id, cadastro_cte_haras_id, codigo, nome, valor, data_inicio, data_fim)
-       values ($1,$2,'FE','Feno',50,current_date,current_date + 1)`,
-      [tenant, b],
+      `insert into produtos (tenant_id, cadastro_cte_haras_id, codigo, nome, valor, data_inicio, data_fim, fornecedor_id)
+       values ($1,$2,'FE','Feno',50,current_date,current_date + 1,$3)`,
+      [tenant, b, supplierB],
     );
     assert.equal((await (await clientA("/api/horse-products")).json()).products.find((item) => item.id === ids.FE).duplicado, false);
     const createdHorse = await horseAction(clientA, { produto_cadastro_id: a, produtos: selection, valor_mensalidade: 85.67 });
@@ -409,19 +436,19 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await db.query("select valor_mensalidade::text as valor from equinos where id = $1", [horseId])).rows[0].valor, "85.67");
     const historic = (await db.query(
       `insert into produtos
-       (tenant_id, cadastro_cte_haras_id, codigo, nome, marca, descricao, valor, data_inicio, data_fim)
-       values ($1,$2,'FE','Feno','Marca','Feno histórico',7.25,current_date - 11,current_date - 9)
+       (tenant_id, cadastro_cte_haras_id, codigo, nome, marca, descricao, valor, data_inicio, data_fim, fornecedor_id)
+       values ($1,$2,'FE','Feno','Marca','Feno histórico',7.25,current_date - 11,current_date - 9,$3)
        returning id`,
-      [tenant, a],
+      [tenant, a, supplierA],
     )).rows[0].id;
     await db.query("update equinos set created_at = current_date - 10 where id = $1", [horseId]);
     const historicProducts = (await (await clientA(`/api/horse-products?horseId=${horseId}`)).json()).selections;
     assert.equal(historicProducts.find((item) => item.categoria === "feno").produto_id, historic);
     assert.equal(historicProducts.find((item) => item.categoria === "feno").valor, "7.25");
     const historicDuplicate = (await db.query(
-      `insert into produtos (tenant_id, cadastro_cte_haras_id, codigo, nome, valor, data_inicio, data_fim)
-       values ($1,$2,'FE','Feno',8,current_date - 12,current_date - 8) returning id`,
-      [tenant, a],
+      `insert into produtos (tenant_id, cadastro_cte_haras_id, codigo, nome, valor, data_inicio, data_fim, fornecedor_id)
+       values ($1,$2,'FE','Feno',8,current_date - 12,current_date - 8,$3) returning id`,
+      [tenant, a, supplierA],
     )).rows[0].id;
     assert.equal((await clientA(`/api/horse-products?horseId=${horseId}`)).status, 409);
     await db.query("delete from produtos where id = $1", [historicDuplicate]);

@@ -16,9 +16,11 @@ type Product = {
   data_fim: string;
   cadastro_nome: string;
   tipo_cadastro: "CTE" | "HARAS";
+  fornecedor_id: string;
+  fornecedor_nome: string;
 };
 
-type ProductResponse = { products: Product[]; hoje: string; amanha: string };
+type ProductResponse = { products: Product[]; suppliers: { id: string; nome: string; cadastro_cte_haras_id: string }[]; hoje: string; amanha: string };
 type ProductForm = {
   nome: string;
   codigo: string;
@@ -29,11 +31,12 @@ type ProductForm = {
   valor: string;
   data_inicio: string;
   data_fim: string;
+  fornecedor_id: string;
 };
 
 const emptyForm: ProductForm = {
   nome: "", codigo: "", subitem: "01", marca: "", fabricante: "", descricao: "", valor: "",
-  data_inicio: "", data_fim: "9999-12-31",
+  data_inicio: "", data_fim: "9999-12-31", fornecedor_id: "",
 };
 
 async function loadProducts(): Promise<ProductResponse> {
@@ -48,7 +51,12 @@ function formatDate(value: string) {
   return `${day}/${month}/${year}`;
 }
 
-export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolean }) {
+export function Products({ canCreate, demo, supplierFilter, onClearSupplier }: {
+  canCreate: boolean;
+  demo: boolean;
+  supplierFilter: { id: string; nome: string } | null;
+  onClearSupplier: () => void;
+}) {
   const [data, setData] = useState<ProductResponse | null>(null);
   const [form, setForm] = useState<ProductForm | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -77,7 +85,8 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
   );
   const locked = Boolean(editingId || codeProduct);
   const filtered = (data?.products ?? []).filter((product) =>
-    [product.codigo, product.subitem, product.nome, product.marca, product.fabricante, product.cadastro_nome]
+    (!supplierFilter || product.fornecedor_id === supplierFilter.id) &&
+    [product.codigo, product.subitem, product.nome, product.marca, product.fabricante, product.cadastro_nome, product.fornecedor_nome]
       .join(" ").toLocaleLowerCase("pt-BR").includes(search.trim().toLocaleLowerCase("pt-BR")),
   );
 
@@ -165,16 +174,17 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
           <span className="sr-only">Buscar produto</span>
           <input type="search" placeholder="Buscar produto, código ou marca" value={search} onChange={(event) => setSearch(event.target.value)} />
         </label>
-        {canCreate && <button className="button button-primary" disabled={saving} onClick={() => { setFeedback(""); setEditingId(null); setForm({ ...emptyForm, data_inicio: data.hoje }); }}><Plus size={20} /> Novo produto</button>}
+        {canCreate && <button className="button button-primary" disabled={saving} onClick={() => { setFeedback(""); setEditingId(null); setForm({ ...emptyForm, data_inicio: data.hoje, fornecedor_id: supplierFilter?.id ?? "" }); }}><Plus size={20} /> Novo produto</button>}
       </div>
+      {supplierFilter && <div className="provider-note">Produtos de <strong>{supplierFilter.nome}</strong> <button type="button" className="button button-quiet provider-small-button" onClick={onClearSupplier}>Ver todos</button></div>}
       {filtered.length === 0 ? <div className="panel empty-state"><h2>Nenhum produto encontrado</h2></div> : (
         <div className="client-table-wrap">
           <table className="client-table">
-            <thead><tr>{!canCreate && <th>CTE/Haras</th>}<th>Código</th><th>Subitem</th><th>Nome</th><th>Marca</th><th>Fabricante</th><th>Descrição</th><th>Valor</th><th>Início</th><th>Fim</th>{canCreate && <th>Ações</th>}</tr></thead>
+            <thead><tr>{!canCreate && <th>CTE/Haras</th>}<th>Código</th><th>Subitem</th><th>Nome</th><th>Fornecedor</th><th>Marca</th><th>Fabricante</th><th>Descrição</th><th>Valor</th><th>Início</th><th>Fim</th>{canCreate && <th>Ações</th>}</tr></thead>
             <tbody>{filtered.map((product) => (
               <tr key={product.id}>
                 {!canCreate && <td>{product.cadastro_nome} ({product.tipo_cadastro})</td>}
-                <td>{product.codigo}</td><td>{product.subitem}</td><td>{product.nome}</td><td>{product.marca || "—"}</td><td>{product.fabricante || "—"}</td>
+                <td>{product.codigo}</td><td>{product.subitem}</td><td>{product.nome}</td><td>{product.fornecedor_nome}</td><td>{product.marca || "—"}</td><td>{product.fabricante || "—"}</td>
                 <td>{product.descricao || "—"}</td><td>{Number(product.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
                 <td>{formatDate(product.data_inicio)}</td><td>{formatDate(product.data_fim)}</td>
                 {canCreate && <td><div className="client-row-actions">
@@ -185,7 +195,7 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
                       setForm({
                         codigo: product.codigo, subitem: product.subitem, nome: product.nome, marca: product.marca,
                         fabricante: product.fabricante, descricao: product.descricao, valor: product.valor,
-                        data_inicio: product.data_inicio, data_fim: product.data_fim,
+                        data_inicio: product.data_inicio, data_fim: product.data_fim, fornecedor_id: product.fornecedor_id,
                       });
                     }}>Alterar</button>
                   )}
@@ -210,13 +220,18 @@ export function Products({ canCreate, demo }: { canCreate: boolean; demo: boolea
               <button type="button" className="icon-button" aria-label="Fechar" disabled={saving} onClick={() => setForm(null)}><X size={22} /></button>
             </div>
             <form className="client-form" onSubmit={(event) => void submit(event)}>
+              <label htmlFor="product-supplier">Fornecedor responsável</label>
+              <select id="product-supplier" required disabled={Boolean(editingId)} value={form.fornecedor_id} onChange={(event) => setForm({ ...form, fornecedor_id: event.target.value })}>
+                <option value="">Selecione</option>{data.suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.nome}</option>)}
+              </select>
+              {data.suppliers.length === 0 && <p>Cadastre um fornecedor antes de cadastrar produtos.</p>}
               <label htmlFor="product-code">Código do produto</label>
               <input id="product-code" required maxLength={5} pattern="[A-Za-z0-9]{1,5}" readOnly={!!editingId} value={form.codigo} onChange={(event) => {
                 const codigo = event.target.value;
                 const product = data.products.find((item) => item.codigo === codigo.trim());
                 const next = product ? Number(product.subitem) + 1 : 1;
                 setForm({
-                  ...emptyForm, codigo, subitem: next <= 99 ? String(next).padStart(2, "0") : "",
+                  ...emptyForm, codigo, fornecedor_id: form.fornecedor_id, subitem: next <= 99 ? String(next).padStart(2, "0") : "",
                   nome: product?.nome ?? "", marca: product?.marca ?? "", fabricante: product?.fabricante ?? "",
                   data_inicio: data.hoje,
                 });

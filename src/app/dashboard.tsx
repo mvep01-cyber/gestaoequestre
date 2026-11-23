@@ -32,6 +32,9 @@ import { signOut } from "next-auth/react";
 import { CteHarasRegistrations, type CteHarasRegistration } from "./cte-haras-registrations";
 import { AdminFinance, type AdminFinanceEntry, type AdminFinanceRegistration } from "./admin-finance";
 import { Products } from "./products";
+import { ServiceProviders, type ProviderCenter } from "./service-providers";
+import { Employees } from "./employees";
+import { Suppliers } from "./suppliers";
 import { isHttpUrl } from "@/lib/url";
 import { horseProductSlots, type HorseProductSelection } from "@/lib/horse-products";
 import { productTimeZone } from "@/lib/product-dates";
@@ -222,7 +225,7 @@ const clientFormDefaults: ClientFormState = {
   data_fim: "",
 };
 
-type Section = "home" | "horses" | "health" | "schedule" | "breeding" | "finance" | "admin" | "clients" | "cteHarasRegistrations" | "products";
+type Section = "home" | "horses" | "health" | "schedule" | "breeding" | "finance" | "admin" | "clients" | "cteHarasRegistrations" | "products" | "providers" | "employees" | "suppliers";
 
 const demoApplications: MedicationApplication[] = [
   {
@@ -276,6 +279,9 @@ const navItems: {
   { id: "finance", label: "Financeiro", icon: Wallet },
   { id: "clients", label: "Clientes", icon: Building2 },
   { id: "products", label: "Produtos", icon: Package },
+  { id: "suppliers", label: "Fornecedores", icon: Building2 },
+  { id: "providers", label: "Prestação de Serviços", icon: Stethoscope },
+  { id: "employees", label: "Funcionários", icon: UsersRound },
   { id: "cteHarasRegistrations", label: "Cadastro CTE/Haras", icon: UsersRound },
   { id: "admin", label: "Plataforma", icon: ShieldCheck },
 ];
@@ -312,6 +318,18 @@ const sectionTitles: Record<Section, { title: string; subtitle: string }> = {
   products: {
     title: "Produtos",
     subtitle: "Consulte o cadastro e o histórico de vigência dos produtos.",
+  },
+  suppliers: {
+    title: "Fornecedores",
+    subtitle: "Cadastre fornecedores e consulte a lista de produtos de cada um.",
+  },
+  providers: {
+    title: "Prestação de Serviços",
+    subtitle: "Cadastre os prestadores e informe os serviços oferecidos ao centro.",
+  },
+  employees: {
+    title: "Funcionários",
+    subtitle: "Visualize a equipe vinculada ao CTE ou Haras.",
   },
   cteHarasRegistrations: {
     title: "Cadastro CTE/Haras",
@@ -539,6 +557,9 @@ export function Dashboard({
   const [billingMonth, setBillingMonth] = useState("");
   const [whatsappUrl, setWhatsappUrl] = useState("");
   const [search, setSearch] = useState("");
+  const [providerCenters, setProviderCenters] = useState<ProviderCenter[]>([]);
+  const [providerCenterId, setProviderCenterId] = useState("");
+  const [supplierFilter, setSupplierFilter] = useState<{ id: string; nome: string } | null>(null);
   const [showHorseForm, setShowHorseForm] = useState(false);
   const [horseEditingId, setHorseEditingId] = useState<string | null>(null);
   const [horseName, setHorseName] = useState("");
@@ -586,10 +607,10 @@ export function Dashboard({
       navItems.filter((item) => {
         if (isSuperAdmin) return item.id === "admin";
         if (role === "CLIENTE") {
-          return isClientAccount && (item.id === "horses" || item.id === "clients" || item.id === "finance" || item.id === "products");
+          return isClientAccount && (item.id === "horses" || item.id === "clients" || item.id === "finance" || item.id === "products" || item.id === "providers" || item.id === "employees" || item.id === "suppliers");
         }
-        if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || item.id === "finance" || item.id === "clients" || item.id === "cteHarasRegistrations" || item.id === "products";
-        if (item.id === "cteHarasRegistrations" || item.id === "products") return false;
+        if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || item.id === "finance" || item.id === "clients" || item.id === "cteHarasRegistrations" || item.id === "products" || item.id === "providers" || item.id === "employees" || item.id === "suppliers";
+        if (item.id === "cteHarasRegistrations" || item.id === "products" || item.id === "providers" || item.id === "employees" || item.id === "suppliers") return false;
         if (item.id === "breeding") return isHaras && !isOperational;
         if (item.id === "finance") return !isOperational;
         if (item.id === "admin") return isSuperAdmin;
@@ -1153,6 +1174,7 @@ export function Dashboard({
 
   function navigate(section: Section) {
     setActiveSection(section);
+    setSupplierFilter(null);
     setSearch("");
     setFeedback("");
   }
@@ -1969,7 +1991,35 @@ export function Dashboard({
       case "clients":
         return renderClients();
       case "products":
-        return isAdmin || isClientAccount ? <Products canCreate={isClientAccount} demo={demo} /> : renderHome();
+        return isAdmin || isClientAccount ? <Products canCreate={isClientAccount} demo={demo} supplierFilter={supplierFilter} onClearSupplier={() => setSupplierFilter(null)} /> : renderHome();
+      case "suppliers":
+        return isAdmin || isClientAccount ? (
+          <Suppliers
+            demo={demo}
+            centerId={providerCenterId}
+            onCentersChange={setProviderCenters}
+            onCenterChange={setProviderCenterId}
+            onViewProducts={(supplier) => { navigate("products"); setSupplierFilter(supplier); }}
+          />
+        ) : renderHome();
+      case "providers":
+        return isAdmin || isClientAccount ? (
+          <ServiceProviders
+            demo={demo}
+            centerId={providerCenterId}
+            onCentersChange={setProviderCenters}
+            onCenterChange={setProviderCenterId}
+          />
+        ) : renderHome();
+      case "employees":
+        return isAdmin || isClientAccount ? (
+          <Employees
+            demo={demo}
+            centerId={providerCenterId}
+            onCentersChange={setProviderCenters}
+            onCenterChange={setProviderCenterId}
+          />
+        ) : renderHome();
       case "cteHarasRegistrations":
         return isAdmin ? (
           <CteHarasRegistrations
@@ -2045,6 +2095,22 @@ export function Dashboard({
             <strong>Campo Vivo</strong>
           </div>
           <div className="topbar-context">
+            {(activeSection === "providers" || activeSection === "employees" || activeSection === "suppliers") && !demo && (
+              <label className="provider-center-selector">
+                <span>Centro</span>
+                <select
+                  aria-label="Selecionar CTE ou Haras"
+                  value={providerCenterId}
+                  onChange={(event) => setProviderCenterId(event.target.value)}
+                  disabled={providerCenters.length === 0}
+                >
+                  {providerCenters.length === 0 && <option value="">Nenhum centro disponível</option>}
+                  {providerCenters.map((center) => (
+                    <option key={center.id} value={center.id}>{center.nome}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <span className="today-label">
               <CalendarDays size={16} />
               Hoje
@@ -2096,22 +2162,6 @@ export function Dashboard({
           {renderSection()}
         </main>
 
-        <nav className="mobile-nav" aria-label="Navegação principal">
-          {visibleNav.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                className={`mobile-nav-item ${activeSection === item.id ? "mobile-nav-active" : ""}`}
-                key={item.id}
-                onClick={() => navigate(item.id)}
-                aria-current={activeSection === item.id ? "page" : undefined}
-              >
-                <Icon size={21} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
       </div>
 
       {showHorseForm && (

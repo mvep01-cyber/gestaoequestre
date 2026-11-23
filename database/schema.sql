@@ -98,10 +98,84 @@ create table if not exists public.cadastros_cte_haras (
 create index if not exists cadastros_cte_haras_tenant_nome_idx
   on public.cadastros_cte_haras (tenant_id, nome);
 
+create table if not exists public.prestadores_servicos (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null,
+  cadastro_cte_haras_id uuid not null,
+  nome text not null,
+  cpf text not null default '',
+  rg text not null default '',
+  endereco text not null default '',
+  complemento varchar(30) not null default '',
+  cep text not null default '',
+  bairro text not null default '',
+  cidade text not null default '',
+  estado text not null default '',
+  telefone text not null default '',
+  email text not null default '',
+  servicos text not null default '',
+  foreign key (cadastro_cte_haras_id, tenant_id)
+    references public.cadastros_cte_haras (id, tenant_id) on delete cascade
+);
+
+alter table public.prestadores_servicos
+  add column if not exists complemento varchar(30) not null default '';
+
+create index if not exists prestadores_servicos_cadastro_nome_idx
+  on public.prestadores_servicos (cadastro_cte_haras_id, nome);
+
+create table if not exists public.funcionarios (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null,
+  cadastro_cte_haras_id uuid not null,
+  nome text not null,
+  cpf text not null default '',
+  rg text not null default '',
+  endereco text not null default '',
+  cep text not null default '',
+  bairro text not null default '',
+  cidade text not null default '',
+  estado text not null default '',
+  telefone text not null default '',
+  email text not null default '',
+  cargo text not null default '',
+  tipo_contratacao text not null default '' check (tipo_contratacao in ('', 'Diarista', 'Mensalista')),
+  valor numeric(12, 2) check (valor >= 0 and valor <> 'NaN'::numeric),
+  foreign key (cadastro_cte_haras_id, tenant_id)
+    references public.cadastros_cte_haras (id, tenant_id) on delete cascade
+);
+
+create index if not exists funcionarios_cadastro_nome_idx
+  on public.funcionarios (cadastro_cte_haras_id, nome);
+
+create table if not exists public.fornecedores (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null,
+  cadastro_cte_haras_id uuid not null,
+  nome text not null,
+  cnpj_cpf text not null default '',
+  endereco text not null default '',
+  cep text not null default '',
+  bairro text not null default '',
+  cidade text not null default '',
+  estado text not null default '',
+  telefone text not null default '',
+  nome_vendedor text not null default '',
+  telefone_vendedor text not null default '',
+  email text not null default '',
+  unique (id, cadastro_cte_haras_id, tenant_id),
+  foreign key (cadastro_cte_haras_id, tenant_id)
+    references public.cadastros_cte_haras (id, tenant_id) on delete cascade
+);
+
+create index if not exists fornecedores_cadastro_nome_idx
+  on public.fornecedores (cadastro_cte_haras_id, nome);
+
 create table if not exists public.produtos (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null,
   cadastro_cte_haras_id uuid not null,
+  fornecedor_id uuid not null,
   criado_por uuid references public.usuarios (id) on delete set null,
   nome text not null,
   codigo text not null,
@@ -115,11 +189,24 @@ create table if not exists public.produtos (
   created_at timestamptz not null default now(),
   foreign key (cadastro_cte_haras_id, tenant_id)
     references public.cadastros_cte_haras (id, tenant_id) on delete cascade,
+  constraint produtos_fornecedor_centro_fk foreign key (fornecedor_id, cadastro_cte_haras_id, tenant_id)
+    references public.fornecedores (id, cadastro_cte_haras_id, tenant_id),
   check (data_inicio <= data_fim),
   constraint produtos_codigo_formato_check check (codigo ~ '^[A-Za-z0-9]{1,5}$'),
   constraint produtos_subitem_formato_check check (subitem ~ '^[0-9]{2}$'),
   constraint produtos_cadastro_codigo_subitem_inicio_key unique (cadastro_cte_haras_id, codigo, subitem, data_inicio)
 );
+
+alter table public.produtos add column if not exists fornecedor_id uuid;
+alter table public.produtos alter column fornecedor_id set not null;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_fornecedor_centro_fk') then
+    alter table public.produtos add constraint produtos_fornecedor_centro_fk
+      foreign key (fornecedor_id, cadastro_cte_haras_id, tenant_id)
+      references public.fornecedores (id, cadastro_cte_haras_id, tenant_id);
+  end if;
+end $$;
 
 alter table public.produtos add column if not exists subitem text;
 update public.produtos set subitem = '01' where subitem is null;
