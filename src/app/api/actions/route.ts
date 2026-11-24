@@ -1159,6 +1159,7 @@ export async function POST(request: Request) {
         const horse = await pool.query(
           `select 1 from public.equinos
            where id = $1 and tenant_id = $2 and excluido_em is null
+             and categoria <> 'RECEPTORA'
              and ($3::boolean or criado_por = $4)`,
           [fields.horseId, tenantId, isManager, user.id],
         );

@@ -1681,7 +1681,7 @@ export function Dashboard({
       <ScheduleModule
         demo={demo}
         canManage={canManageClients}
-        horses={horses}
+        horses={horses.filter((horse) => horse.categoria !== "RECEPTORA")}
         trainings={trainingPlans}
         post={postDashboardAction}
         onFeedback={setFeedback}
