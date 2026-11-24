@@ -3,7 +3,6 @@
 import {
   Activity,
   ArrowRight,
-  Baby,
   Bell,
   Building2,
   CalendarDays,
@@ -53,6 +52,7 @@ type HorseRecord = {
   registro_associacao: string | null;
   sexo: string;
   pelagem: string | null;
+  localizacao?: string | null;
   foto_url?: string | null;
   nome_proprietario?: string | null;
   nome_treinador?: string | null;
@@ -134,17 +134,33 @@ type BillingEntry = {
 type ReproductionCycle = {
   id: string;
   tipo: string;
-  garanhao_id: string;
-  matriz_id: string;
+  garanhao_id: string | null;
+  matriz_id: string | null;
   receptora_id: string | null;
   data_cobertura: string;
+  hora_cobertura: string | null;
+  veterinario: string | null;
+  descricao: string | null;
+  garanhao_origem: "INTERNO" | "EXTERNO";
+  garanhao_externo_nome: string | null;
+  garanhao_externo_registro: string | null;
+  matriz_origem: "INTERNO" | "EXTERNO";
+  matriz_externa_nome: string | null;
+  matriz_externa_registro: string | null;
   status: string;
   data_previsao_parto: string | null;
   data_parto_real: string | null;
   potro_gerado_id: string | null;
   nome_garanhao: string;
   nome_matriz: string;
+  nome_receptora: string | null;
+  localizacao_receptora: string | null;
 };
+
+type ReproductionRecipientOption = Pick<
+  HorseRecord,
+  "id" | "nome" | "categoria" | "localizacao" | "registro_associacao"
+>;
 
 type ClientRecord = {
   id: string;
@@ -190,6 +206,7 @@ type DashboardProps = {
   pixAccounts?: PixAccount[];
   financeEntries?: FinanceEntry[];
   reproductionCycles?: ReproductionCycle[];
+  reproductionVeterinarians?: string[];
 };
 
 type ClientFormState = {
@@ -206,6 +223,54 @@ type ClientFormState = {
   numero_socio_abccmm: string;
   data_inicio: string;
   data_fim: string;
+};
+
+type CycleFormState = {
+  tipo: "MONTA" | "INSEMINACAO" | "TE";
+  matriz_origem: "INTERNO" | "EXTERNO";
+  matriz_id: string;
+  matriz_externa_nome: string;
+  matriz_externa_registro: string;
+  garanhao_origem: "INTERNO" | "EXTERNO";
+  garanhao_id: string;
+  garanhao_externo_nome: string;
+  garanhao_externo_registro: string;
+  receptora_id: string;
+  data_cobertura: string;
+  hora_cobertura: string;
+  veterinario: string;
+  data_previsao_parto: string;
+  descricao: string;
+};
+
+const cycleFormDefaults: CycleFormState = {
+  tipo: "MONTA",
+  matriz_origem: "INTERNO",
+  matriz_id: "",
+  matriz_externa_nome: "",
+  matriz_externa_registro: "",
+  garanhao_origem: "INTERNO",
+  garanhao_id: "",
+  garanhao_externo_nome: "",
+  garanhao_externo_registro: "",
+  receptora_id: "",
+  data_cobertura: "",
+  hora_cobertura: "",
+  veterinario: "",
+  data_previsao_parto: "",
+  descricao: "",
+};
+
+type RecipientFormState = {
+  nome: string;
+  registro_associacao: string;
+  localizacao: string;
+};
+
+const recipientFormDefaults: RecipientFormState = {
+  nome: "",
+  registro_associacao: "",
+  localizacao: "",
 };
 
 const clientFormDefaults: ClientFormState = {
@@ -417,18 +482,69 @@ function isReproductionCycle(value: unknown): value is ReproductionCycle {
     isRecord(value) &&
     typeof value.id === "string" &&
     typeof value.tipo === "string" &&
-    typeof value.garanhao_id === "string" &&
-    typeof value.matriz_id === "string" &&
+    (typeof value.garanhao_id === "string" || value.garanhao_id === null) &&
+    (typeof value.matriz_id === "string" || value.matriz_id === null) &&
     (typeof value.receptora_id === "string" || value.receptora_id === null) &&
     typeof value.data_cobertura === "string" &&
+    (typeof value.hora_cobertura === "string" || value.hora_cobertura === null) &&
+    (typeof value.veterinario === "string" || value.veterinario === null) &&
+    (typeof value.descricao === "string" || value.descricao === null) &&
+    (value.garanhao_origem === "INTERNO" || value.garanhao_origem === "EXTERNO") &&
+    (typeof value.garanhao_externo_nome === "string" ||
+      value.garanhao_externo_nome === null) &&
+    (typeof value.garanhao_externo_registro === "string" ||
+      value.garanhao_externo_registro === null) &&
+    (value.matriz_origem === "INTERNO" || value.matriz_origem === "EXTERNO") &&
+    (typeof value.matriz_externa_nome === "string" ||
+      value.matriz_externa_nome === null) &&
+    (typeof value.matriz_externa_registro === "string" ||
+      value.matriz_externa_registro === null) &&
     typeof value.status === "string" &&
     (typeof value.data_previsao_parto === "string" ||
       value.data_previsao_parto === null) &&
     (typeof value.data_parto_real === "string" || value.data_parto_real === null) &&
     (typeof value.potro_gerado_id === "string" || value.potro_gerado_id === null) &&
     typeof value.nome_garanhao === "string" &&
-    typeof value.nome_matriz === "string"
+    typeof value.nome_matriz === "string" &&
+    (typeof value.nome_receptora === "string" || value.nome_receptora === null) &&
+    (typeof value.localizacao_receptora === "string" ||
+      value.localizacao_receptora === null)
   );
+}
+
+function isReproductionRecipient(value: unknown): value is ReproductionRecipientOption {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.nome === "string" &&
+    value.categoria === "RECEPTORA" &&
+    (typeof value.registro_associacao === "string" ||
+      value.registro_associacao === null) &&
+    (typeof value.localizacao === "string" || value.localizacao === null)
+  );
+}
+
+function reproductionTypeLabel(type: string) {
+  if (type === "INSEMINACAO") return "Inseminação";
+  if (type === "TE") return "Transferência de embrião";
+  return "Monta";
+}
+
+function reproductionStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    AGUARDANDO_EXAME: "Aguardando exame",
+    PRENHE: "Prenhe",
+    VAZIA: "Vazia",
+    PARIDA: "Parida",
+  };
+  return labels[status] ?? status.replaceAll("_", " ");
+}
+
+function formatReproductionDate(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(date);
 }
 
 function isClientRecord(value: unknown): value is ClientRecord {
@@ -525,6 +641,7 @@ export function Dashboard({
   pixAccounts = [],
   financeEntries: initialFinanceEntries = [],
   reproductionCycles: initialReproductionCycles = [],
+  reproductionVeterinarians = [],
   clients: initialClients = [],
   cteHarasRegistrations = [],
   selectedTenantId,
@@ -539,6 +656,14 @@ export function Dashboard({
   );
   const [demoHorses, setDemoHorses] = useState(initialHorses);
   const horses = demo ? demoHorses : initialHorses;
+  const [createdReproductionRecipients, setCreatedReproductionRecipients] =
+    useState<ReproductionRecipientOption[]>([]);
+  const reproductionHorses = [
+    ...horses,
+    ...createdReproductionRecipients.filter(
+      (recipient) => !horses.some((horse) => horse.id === recipient.id),
+    ),
+  ];
   const [applications, setApplications] = useState(
     demo && medicationApplications.length === 0 ? demoApplications : medicationApplications,
   );
@@ -582,12 +707,13 @@ export function Dashboard({
   const [feedback, setFeedback] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [showCycleForm, setShowCycleForm] = useState(false);
-  const [cycleType, setCycleType] = useState("MONTA");
-  const [cycleMareId, setCycleMareId] = useState("");
-  const [cycleSireId, setCycleSireId] = useState("");
-  const [cycleRecipientId, setCycleRecipientId] = useState("");
-  const [cycleDate, setCycleDate] = useState("");
-  const [cycleDueDate, setCycleDueDate] = useState("");
+  const [cycleEditingId, setCycleEditingId] = useState<string | null>(null);
+  const [cycleForm, setCycleForm] = useState<CycleFormState>({ ...cycleFormDefaults });
+  const [cycleSearch, setCycleSearch] = useState("");
+  const [selectedCycle, setSelectedCycle] = useState<ReproductionCycle | null>(null);
+  const [showRecipientForm, setShowRecipientForm] = useState(false);
+  const [recipientForm, setRecipientForm] =
+    useState<RecipientFormState>({ ...recipientFormDefaults });
   const [showClientForm, setShowClientForm] = useState(false);
   const [clientForm, setClientForm] = useState<ClientFormState>(clientFormDefaults);
   const isOperational = role === "OPERACIONAL";
@@ -597,6 +723,7 @@ export function Dashboard({
   const isClientAccount =
     role === "CLIENTE" &&
     (clientRegistrationType === "CTE" || clientRegistrationType === "HARAS");
+  const canManageReproduction = isAdmin && isHaras;
   const canManageHorses = isOperational || isClientAccount;
   const canManageClients = isAdmin || isOperational || isClientAccount;
 
@@ -607,7 +734,7 @@ export function Dashboard({
         if (role === "CLIENTE") {
           return isClientAccount && (item.id === "horses" || item.id === "clients" || item.id === "finance" || item.id === "products" || item.id === "providers" || item.id === "employees" || item.id === "suppliers");
         }
-        if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || item.id === "finance" || item.id === "clients" || item.id === "cteHarasRegistrations" || item.id === "products" || item.id === "providers" || item.id === "employees" || item.id === "suppliers";
+        if (isAdmin) return item.id === "home" || item.id === "horses" || item.id === "health" || item.id === "schedule" || (item.id === "breeding" && isHaras) || item.id === "finance" || item.id === "clients" || item.id === "cteHarasRegistrations" || item.id === "products" || item.id === "providers" || item.id === "employees" || item.id === "suppliers";
         if (item.id === "cteHarasRegistrations" || item.id === "products" || item.id === "providers" || item.id === "employees" || item.id === "suppliers") return false;
         if (item.id === "breeding") return isHaras && !isOperational;
         if (item.id === "finance") return !isOperational;
@@ -952,70 +1079,192 @@ export function Dashboard({
     }
   }
 
-  async function handleCreateCycle(event: FormEvent<HTMLFormElement>) {
+  function openCycleForm(cycle?: ReproductionCycle) {
+    setCycleEditingId(cycle?.id ?? null);
+    setCycleForm(
+      cycle
+        ? {
+            tipo:
+              cycle.tipo === "INSEMINACAO" || cycle.tipo === "TE"
+                ? cycle.tipo
+                : "MONTA",
+            matriz_origem: cycle.matriz_origem,
+            matriz_id: cycle.matriz_id ?? "",
+            matriz_externa_nome: cycle.matriz_externa_nome ?? "",
+            matriz_externa_registro: cycle.matriz_externa_registro ?? "",
+            garanhao_origem: cycle.garanhao_origem,
+            garanhao_id: cycle.garanhao_id ?? "",
+            garanhao_externo_nome: cycle.garanhao_externo_nome ?? "",
+            garanhao_externo_registro: cycle.garanhao_externo_registro ?? "",
+            receptora_id: cycle.receptora_id ?? "",
+            data_cobertura: cycle.data_cobertura,
+            hora_cobertura: cycle.hora_cobertura ?? "",
+            veterinario: cycle.veterinario ?? "",
+            data_previsao_parto: cycle.data_previsao_parto ?? "",
+            descricao: cycle.descricao ?? "",
+          }
+        : { ...cycleFormDefaults },
+    );
+    setSelectedCycle(null);
+    setShowCycleForm(true);
+  }
+
+  function closeCycleForm() {
+    setShowCycleForm(false);
+    setCycleEditingId(null);
+  }
+
+  async function handleSaveCycle(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback("");
     setIsSaving(true);
-    const mare = horses.find((horse) => horse.id === cycleMareId);
-    const sire = horses.find((horse) => horse.id === cycleSireId);
-
-    if (!mare || !sire) {
-      setFeedback("Selecione uma matriz e um garanhão.");
-      setIsSaving(false);
-      return;
-    }
+    const mare = reproductionHorses.find(
+      (horse) => horse.id === cycleForm.matriz_id,
+    );
+    const sire = reproductionHorses.find(
+      (horse) => horse.id === cycleForm.garanhao_id,
+    );
+    const recipient = reproductionHorses.find(
+      (horse) => horse.id === cycleForm.receptora_id,
+    );
+    const fields = {
+      type: cycleForm.tipo,
+      mareOrigin: cycleForm.matriz_origem,
+      mareId: cycleForm.matriz_id || null,
+      mareExternalName: cycleForm.matriz_externa_nome.trim(),
+      mareExternalRegistration: cycleForm.matriz_externa_registro.trim(),
+      sireOrigin: cycleForm.garanhao_origem,
+      sireId: cycleForm.garanhao_id || null,
+      sireExternalName: cycleForm.garanhao_externo_nome.trim(),
+      sireExternalRegistration: cycleForm.garanhao_externo_registro.trim(),
+      recipientId: cycleForm.receptora_id || null,
+      coverageDate: cycleForm.data_cobertura,
+      coverageTime: cycleForm.hora_cobertura,
+      veterinarian: cycleForm.veterinario,
+      dueDate: cycleForm.data_previsao_parto,
+      description: cycleForm.descricao.trim(),
+    };
 
     try {
       if (demo) {
-        setReproductionCycles((current) => [
-          {
-            id: `demo-cycle-${Date.now()}`,
-            tipo: cycleType,
-            garanhao_id: sire.id,
-            matriz_id: mare.id,
-            receptora_id: cycleRecipientId || null,
-            data_cobertura: cycleDate,
-            status: "AGUARDANDO_EXAME",
-            data_previsao_parto: cycleDueDate || null,
-            data_parto_real: null,
-            potro_gerado_id: null,
-            nome_garanhao: sire.nome,
-            nome_matriz: mare.nome,
-          },
-          ...current,
-        ]);
+        const existing = reproductionCycles.find(
+          (cycle) => cycle.id === cycleEditingId,
+        );
+        const cycle: ReproductionCycle = {
+          id: cycleEditingId ?? `demo-cycle-${Date.now()}`,
+          tipo: fields.type,
+          garanhao_id: fields.sireId,
+          matriz_id: fields.mareId,
+          receptora_id: fields.recipientId,
+          data_cobertura: fields.coverageDate,
+          hora_cobertura: fields.coverageTime || null,
+          veterinario: fields.veterinarian || null,
+          descricao: fields.description || null,
+          garanhao_origem: fields.sireOrigin,
+          garanhao_externo_nome:
+            fields.sireOrigin === "EXTERNO" ? fields.sireExternalName : null,
+          garanhao_externo_registro:
+            fields.sireOrigin === "EXTERNO"
+              ? fields.sireExternalRegistration || null
+              : null,
+          matriz_origem: fields.mareOrigin,
+          matriz_externa_nome:
+            fields.mareOrigin === "EXTERNO" ? fields.mareExternalName : null,
+          matriz_externa_registro:
+            fields.mareOrigin === "EXTERNO"
+              ? fields.mareExternalRegistration || null
+              : null,
+          status: existing?.status ?? "AGUARDANDO_EXAME",
+          data_previsao_parto: fields.dueDate || null,
+          data_parto_real: existing?.data_parto_real ?? null,
+          potro_gerado_id: existing?.potro_gerado_id ?? null,
+          nome_garanhao:
+            fields.sireOrigin === "EXTERNO"
+              ? fields.sireExternalName
+              : sire?.nome ?? "",
+          nome_matriz:
+            fields.mareOrigin === "EXTERNO"
+              ? fields.mareExternalName
+              : mare?.nome ?? "",
+          nome_receptora: recipient?.nome ?? null,
+          localizacao_receptora: recipient?.localizacao ?? null,
+        };
+        setReproductionCycles((current) =>
+          cycleEditingId
+            ? current.map((item) => (item.id === cycleEditingId ? cycle : item))
+            : [cycle, ...current],
+        );
       } else {
-        const result = await postDashboardAction("createCycle", {
-          type: cycleType,
-          mareId: mare.id,
-          sireId: sire.id,
-          recipientId: cycleRecipientId || null,
-          coverageDate: cycleDate,
-          dueDate: cycleDueDate,
-        });
+        const result = await postDashboardAction(
+          cycleEditingId ? "updateCycle" : "createCycle",
+          { ...fields, ...(cycleEditingId ? { id: cycleEditingId } : {}) },
+        );
         const cycle = isRecord(result) ? result.cycle : null;
         if (!isReproductionCycle(cycle)) {
-          throw new Error("O servidor não retornou o ciclo registrado.");
+          throw new Error("O servidor não retornou o ciclo salvo.");
         }
 
-        setReproductionCycles((current) => [
-          cycle,
-          ...current,
-        ]);
+        setReproductionCycles((current) =>
+          cycleEditingId
+            ? current.map((item) => (item.id === cycle.id ? cycle : item))
+            : [cycle, ...current],
+        );
       }
 
-      setCycleMareId("");
-      setCycleSireId("");
-      setCycleRecipientId("");
-      setCycleDate("");
-      setCycleDueDate("");
+      setCycleForm({ ...cycleFormDefaults });
       setShowCycleForm(false);
-      setFeedback("Ciclo reprodutivo registrado.");
+      setFeedback(
+        cycleEditingId ? "Ciclo reprodutivo atualizado." : "Ciclo reprodutivo registrado.",
+      );
+      setCycleEditingId(null);
       router.refresh();
     } catch (error) {
-      console.error("Falha ao registrar ciclo reprodutivo:", error);
+      console.error("Falha ao salvar ciclo reprodutivo:", error);
       setFeedback(
-        error instanceof Error ? error.message : "Não foi possível registrar o ciclo.",
+        error instanceof Error ? error.message : "Não foi possível salvar o ciclo.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleCreateRecipient(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFeedback("");
+    setIsSaving(true);
+    const name = recipientForm.nome.trim();
+    try {
+      let recipient: ReproductionRecipientOption;
+      if (demo) {
+        recipient = {
+          id: `demo-recipient-${Date.now()}`,
+          nome: name,
+          categoria: "RECEPTORA",
+          registro_associacao: recipientForm.registro_associacao.trim() || null,
+          localizacao: recipientForm.localizacao.trim() || null,
+        };
+      } else {
+        const result = await postDashboardAction("createRecipient", {
+          name,
+          registration: recipientForm.registro_associacao,
+          location: recipientForm.localizacao,
+        });
+        const created = isRecord(result) ? result.recipient : null;
+        if (!isReproductionRecipient(created)) {
+          throw new Error("O servidor não retornou a receptora cadastrada.");
+        }
+        recipient = created;
+      }
+
+      setCreatedReproductionRecipients((current) => [recipient, ...current]);
+      setRecipientForm({ ...recipientFormDefaults });
+      setShowRecipientForm(false);
+      setFeedback("Receptora cadastrada.");
+      router.refresh();
+    } catch (error) {
+      console.error("Falha ao cadastrar receptora:", error);
+      setFeedback(
+        error instanceof Error ? error.message : "Não foi possível cadastrar a receptora.",
       );
     } finally {
       setIsSaving(false);
@@ -1485,176 +1734,669 @@ export function Dashboard({
   }
 
   function renderBreeding() {
+    const filteredCycles = reproductionCycles.filter((cycle) => {
+      const searchable = [
+        cycle.nome_matriz,
+        cycle.matriz_origem,
+        cycle.nome_garanhao,
+        cycle.garanhao_origem,
+        cycle.nome_receptora,
+        cycle.tipo,
+        cycle.data_cobertura,
+        cycle.hora_cobertura,
+        cycle.veterinario,
+        cycle.descricao,
+        reproductionStatusLabel(cycle.status),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase("pt-BR");
+      return searchable.includes(cycleSearch.trim().toLocaleLowerCase("pt-BR"));
+    });
+
+    function changeOrigin(
+      animal: "matriz" | "garanhao",
+      value: string,
+    ) {
+      if (value !== "INTERNO" && value !== "EXTERNO") return;
+      setCycleForm((current) =>
+        animal === "matriz"
+          ? {
+              ...current,
+              matriz_origem: value,
+              matriz_id: "",
+              matriz_externa_nome: "",
+              matriz_externa_registro: "",
+            }
+          : {
+              ...current,
+              garanhao_origem: value,
+              garanhao_id: "",
+              garanhao_externo_nome: "",
+              garanhao_externo_registro: "",
+            },
+      );
+    }
+
+    function renderOriginField(animal: "matriz" | "garanhao", label: string) {
+      const isMare = animal === "matriz";
+      const origin = isMare ? cycleForm.matriz_origem : cycleForm.garanhao_origem;
+      const horseId = isMare ? cycleForm.matriz_id : cycleForm.garanhao_id;
+      const externalName = isMare
+        ? cycleForm.matriz_externa_nome
+        : cycleForm.garanhao_externo_nome;
+      const externalRegistration = isMare
+        ? cycleForm.matriz_externa_registro
+        : cycleForm.garanhao_externo_registro;
+      const category = isMare ? "MATRIZ" : "GARANHAO";
+      const eligibleHorses = reproductionHorses.filter(
+        (horse) => horse.categoria === category,
+      );
+
+      return (
+        <fieldset className="cycle-origin-group">
+          <legend>{label}</legend>
+          <div className="cycle-origin-options">
+            <label>
+              <input
+                type="radio"
+                name={`${animal}-origin`}
+                value="INTERNO"
+                required
+                checked={origin === "INTERNO"}
+                onChange={(event) => changeOrigin(animal, event.target.value)}
+              />
+              Interno — cavalo cadastrado
+            </label>
+            <label>
+              <input
+                type="radio"
+                name={`${animal}-origin`}
+                value="EXTERNO"
+                checked={origin === "EXTERNO"}
+                onChange={(event) => changeOrigin(animal, event.target.value)}
+              />
+              Externo
+            </label>
+          </div>
+          {origin === "INTERNO" ? (
+            <label className="cycle-form-field">
+              {label} cadastrada
+              <select
+                required
+                value={horseId}
+                onChange={(event) =>
+                  setCycleForm((current) =>
+                    isMare
+                      ? { ...current, matriz_id: event.target.value }
+                      : { ...current, garanhao_id: event.target.value },
+                  )
+                }
+              >
+                <option value="">Selecione</option>
+                {eligibleHorses.map((horse) => (
+                  <option value={horse.id} key={horse.id}>{horse.nome}</option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="cycle-origin-fields">
+              <label className="cycle-form-field">
+                Nome {isMare ? "da matriz" : "do garanhão"} externo
+                <input
+                  type="text"
+                  required
+                  maxLength={120}
+                  value={externalName}
+                  onChange={(event) =>
+                    setCycleForm((current) =>
+                      isMare
+                        ? { ...current, matriz_externa_nome: event.target.value }
+                        : { ...current, garanhao_externo_nome: event.target.value },
+                    )
+                  }
+                />
+              </label>
+              <label className="cycle-form-field">
+                Registro (opcional)
+                <input
+                  type="text"
+                  maxLength={80}
+                  value={externalRegistration}
+                  onChange={(event) =>
+                    setCycleForm((current) =>
+                      isMare
+                        ? {
+                            ...current,
+                            matriz_externa_registro: event.target.value,
+                          }
+                        : {
+                            ...current,
+                            garanhao_externo_registro: event.target.value,
+                          },
+                    )
+                  }
+                />
+              </label>
+            </div>
+          )}
+        </fieldset>
+      );
+    }
+
+    const selectedRecipient = reproductionHorses.find(
+      (horse) => horse.id === cycleForm.receptora_id,
+    );
+
     return (
       <>
-        <div className="module-grid">
-          <section className="panel module-panel breeding-hero">
-            <span className="module-badge"><Dna size={22} /></span>
-            <span className="eyebrow">Plantel reprodutivo</span>
-            <h2>{cycleCount} ciclos acompanhados</h2>
-            <p>Consulte coberturas, exames, previsões de parto e nascimentos.</p>
-            {!isOperational && (
-              <button
-                className="button button-primary"
-                onClick={() => setShowCycleForm((visible) => !visible)}
-              >
-                <Plus size={19} /> Novo ciclo
-              </button>
-            )}
-          </section>
-          <section className="panel category-panel">
-            <h2>Atalhos do plantel</h2>
-            <div className="category-list">
-              {[
-                { label: "Matrizes", value: "MATRIZ", icon: UsersRound },
-                { label: "Garanhões", value: "GARANHAO", icon: Activity },
-                { label: "Potros", value: "POTRO", icon: Baby },
-                { label: "Receptoras", value: "RECEPTORA", icon: HeartPulse },
-              ].map((category) => {
-                const Icon = category.icon;
-                const count = horses.filter((horse) => horse.categoria === category.value).length;
-                return (
-                  <button
-                    key={category.value}
-                    onClick={() => {
-                      setHorseCategory(category.value);
-                      setSearch("");
-                      navigate("horses");
-                    }}
-                  >
-                    <Icon size={20} />
-                    <span>{category.label}</span>
-                    <small>{count}</small>
-                    <ChevronRight size={18} />
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        </div>
-        {showCycleForm && (
-          <form
-            className="panel cycle-form"
-            onSubmit={(event) => void handleCreateCycle(event)}
-          >
-            <div className="panel-heading">
-              <h2>Registrar cobertura</h2>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Fechar formulário"
-                onClick={() => setShowCycleForm(false)}
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="cycle-form-grid">
-              <label>
-                Tipo
-                <select value={cycleType} onChange={(event) => setCycleType(event.target.value)}>
-                  <option value="MONTA">Monta</option>
-                  <option value="INSEMINACAO">Inseminação</option>
-                  <option value="TE">Transferência de embrião</option>
-                </select>
-              </label>
-              <label>
-                Matriz
-                <select required value={cycleMareId} onChange={(event) => setCycleMareId(event.target.value)}>
-                  <option value="">Selecione</option>
-                  {horses.filter((horse) => horse.categoria === "MATRIZ").map((horse) => (
-                    <option key={horse.id} value={horse.id}>{horse.nome}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Garanhão
-                <select required value={cycleSireId} onChange={(event) => setCycleSireId(event.target.value)}>
-                  <option value="">Selecione</option>
-                  {horses.filter((horse) => horse.categoria === "GARANHAO").map((horse) => (
-                    <option key={horse.id} value={horse.id}>{horse.nome}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Receptora (opcional)
-                <select value={cycleRecipientId} onChange={(event) => setCycleRecipientId(event.target.value)}>
-                  <option value="">Não se aplica</option>
-                  {horses.filter((horse) => horse.categoria === "RECEPTORA").map((horse) => (
-                    <option key={horse.id} value={horse.id}>{horse.nome}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Data da cobertura
-                <input
-                  type="date"
-                  required
-                  value={cycleDate}
-                  onChange={(event) => setCycleDate(event.target.value)}
-                />
-              </label>
-              <label>
-                Previsão de parto (opcional)
-                <input
-                  type="date"
-                  value={cycleDueDate}
-                  onChange={(event) => setCycleDueDate(event.target.value)}
-                />
-              </label>
-            </div>
-            <button className="button button-primary" disabled={isSaving}>
-              {isSaving ? "Salvando..." : "Salvar ciclo"}
-            </button>
-          </form>
-        )}
-        <section className="panel cycle-list">
-          <div className="panel-heading">
+        <section className="panel reproduction-panel">
+          <div className="panel-heading reproduction-heading">
             <div>
-              <span className="eyebrow">Acompanhamento</span>
+              <span className="eyebrow">Plantel reprodutivo</span>
               <h2>Ciclos reprodutivos</h2>
             </div>
-            <span className="module-badge"><Dna size={20} /></span>
+            <span className="reproduction-count">{cycleCount} ciclos acompanhados</span>
           </div>
-          {reproductionCycles.length === 0 ? (
-            <div className="empty-state compact">Nenhum ciclo reprodutivo cadastrado.</div>
-          ) : (
-            reproductionCycles.map((cycle) => (
-              <article className="cycle-row" key={cycle.id}>
-                <div className="cycle-info">
-                  <strong>{cycle.nome_matriz} × {cycle.nome_garanhao}</strong>
-                  <span>
-                    {cycle.tipo} · Cobertura{" "}
-                    {new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(
-                      new Date(`${cycle.data_cobertura}T12:00:00Z`),
-                    )}
-                  </span>
-                  {cycle.data_previsao_parto && (
-                    <small>Parto previsto: {cycle.data_previsao_parto}</small>
-                  )}
-                  {cycle.potro_gerado_id && <small>Potro registrado no plantel.</small>}
-                </div>
-                <span className={`cycle-status cycle-${cycle.status.toLowerCase()}`}>
-                  {cycle.status.replaceAll("_", " ")}
-                </span>
-                {!isOperational && cycle.status === "AGUARDANDO_EXAME" && (
-                  <div className="cycle-actions">
-                    <button className="button button-secondary" onClick={() => void updateCycleStatus(cycle.id, "PRENHE")}>
-                      Confirmar prenhez
-                    </button>
-                    <button className="button button-quiet" onClick={() => void updateCycleStatus(cycle.id, "VAZIA")}>
-                      Marcar vazia
-                    </button>
-                  </div>
+          <div className="reproduction-toolbar">
+            <label className="reproduction-search">
+              <Search size={18} aria-hidden="true" />
+              <span className="sr-only">Buscar nesta lista</span>
+              <input
+                type="search"
+                placeholder="Buscar nesta lista"
+                aria-label="Buscar nesta lista"
+                value={cycleSearch}
+                onChange={(event) => setCycleSearch(event.target.value)}
+              />
+            </label>
+            {canManageReproduction && (
+              <div className="reproduction-toolbar-actions">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    setRecipientForm({ ...recipientFormDefaults });
+                    setShowRecipientForm(true);
+                  }}
+                >
+                  Cadastrar receptora
+                </button>
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => openCycleForm()}
+                >
+                  <Plus size={18} /> Novo ciclo
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="reproduction-table-wrap">
+            <table className="reproduction-table">
+              <thead>
+                <tr>
+                  <th scope="col">Matriz</th>
+                  <th scope="col">Origem da matriz</th>
+                  <th scope="col">Garanhão</th>
+                  <th scope="col">Origem do garanhão</th>
+                  <th scope="col">Receptora</th>
+                  <th scope="col">Tipo</th>
+                  <th scope="col">Cobertura</th>
+                  <th scope="col">Horário</th>
+                  <th scope="col">Veterinário</th>
+                  <th scope="col">Descrição</th>
+                  <th scope="col">Situação</th>
+                  <th scope="col">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredCycles.length === 0 ? (
+                  <tr>
+                    <td colSpan={12} className="reproduction-empty">
+                      {reproductionCycles.length === 0
+                        ? "Nenhum ciclo reprodutivo cadastrado."
+                        : "Nenhum ciclo corresponde à busca."}
+                    </td>
+                  </tr>
+                ) : (
+                  filteredCycles.map((cycle) => (
+                    <tr key={cycle.id}>
+                      <td>{cycle.nome_matriz}</td>
+                      <td>{cycle.matriz_origem === "INTERNO" ? "Interno" : "Externo"}</td>
+                      <td>{cycle.nome_garanhao}</td>
+                      <td>{cycle.garanhao_origem === "INTERNO" ? "Interno" : "Externo"}</td>
+                      <td>{cycle.nome_receptora ?? "Não se aplica"}</td>
+                      <td>{reproductionTypeLabel(cycle.tipo)}</td>
+                      <td>{formatReproductionDate(cycle.data_cobertura)}</td>
+                      <td>{cycle.hora_cobertura ?? "—"}</td>
+                      <td>{cycle.veterinario ?? "—"}</td>
+                      <td>{cycle.descricao ?? "—"}</td>
+                      <td>
+                        <span className={`cycle-status cycle-${cycle.status.toLowerCase()}`}>
+                          {reproductionStatusLabel(cycle.status)}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="reproduction-row-actions">
+                          <button
+                            type="button"
+                            className="button button-secondary small-button"
+                            onClick={() => setSelectedCycle(cycle)}
+                          >
+                            Visualizar
+                          </button>
+                          {canManageReproduction && (
+                            <>
+                              <button
+                                type="button"
+                                className="button button-quiet small-button"
+                                disabled={cycle.status === "PARIDA" || Boolean(cycle.potro_gerado_id)}
+                                title={
+                                  cycle.status === "PARIDA" || cycle.potro_gerado_id
+                                    ? "Ciclos com parto registrado não podem ser alterados."
+                                    : undefined
+                                }
+                                onClick={() => openCycleForm(cycle)}
+                              >
+                                Alterar
+                              </button>
+                              {cycle.status === "AGUARDANDO_EXAME" && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="button button-secondary small-button"
+                                    onClick={() => void updateCycleStatus(cycle.id, "PRENHE")}
+                                  >
+                                    Confirmar prenhez
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="button button-quiet small-button"
+                                    onClick={() => void updateCycleStatus(cycle.id, "VAZIA")}
+                                  >
+                                    Marcar vazia
+                                  </button>
+                                </>
+                              )}
+                              {cycle.status === "PRENHE" && (
+                                <button
+                                  type="button"
+                                  className="button button-primary small-button"
+                                  onClick={() => void updateCycleStatus(cycle.id, "PARIDA")}
+                                >
+                                  Registrar parto
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
                 )}
-                {!isOperational && cycle.status === "PRENHE" && (
-                  <button className="button button-primary" onClick={() => void updateCycleStatus(cycle.id, "PARIDA")}>
-                    Registrar parto
-                  </button>
-                )}
-              </article>
-            ))
-          )}
+              </tbody>
+            </table>
+          </div>
+          <p className="reproduction-note">
+            Receptoras vinculadas ao cadastro de cavalos do centro. As novas receptoras
+            cadastradas aqui ficam salvas; veterinários disponíveis são prestadores com
+            serviço veterinário registrado.
+          </p>
         </section>
+        {showCycleForm && (
+          <div
+            className="reproduction-dialog-backdrop"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) closeCycleForm();
+            }}
+          >
+            <section
+              className="reproduction-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cycle-form-title"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") closeCycleForm();
+              }}
+            >
+              <div className="reproduction-dialog-header">
+                <div>
+                  <span className="eyebrow">Plantel reprodutivo</span>
+                  <h2 id="cycle-form-title">
+                    {cycleEditingId ? "Alterar ciclo" : "Registrar cobertura"}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Fechar formulário"
+                  onClick={closeCycleForm}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <form onSubmit={(event) => void handleSaveCycle(event)}>
+                <div className="cycle-form-grid">
+                  <label className="cycle-form-field">
+                    Tipo
+                    <select
+                      value={cycleForm.tipo}
+                      onChange={(event) => {
+                        const tipo = event.target.value;
+                        if (
+                          tipo === "MONTA" ||
+                          tipo === "INSEMINACAO" ||
+                          tipo === "TE"
+                        ) {
+                          setCycleForm((current) => ({ ...current, tipo }));
+                        }
+                      }}
+                    >
+                      <option value="MONTA">Monta</option>
+                      <option value="INSEMINACAO">Inseminação</option>
+                      <option value="TE">Transferência de embrião</option>
+                    </select>
+                  </label>
+                  {renderOriginField("matriz", "Matriz")}
+                  {renderOriginField("garanhao", "Garanhão")}
+                  <label className="cycle-form-field">
+                    Receptora
+                    <select
+                      value={cycleForm.receptora_id}
+                      onChange={(event) =>
+                        setCycleForm((current) => ({
+                          ...current,
+                          receptora_id: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Não se aplica</option>
+                      {reproductionHorses
+                        .filter((horse) => horse.categoria === "RECEPTORA")
+                        .map((horse) => (
+                          <option value={horse.id} key={horse.id}>{horse.nome}</option>
+                        ))}
+                    </select>
+                    {selectedRecipient && (
+                      <small className="reproduction-field-hint">
+                        Local: {selectedRecipient.localizacao || "não informado"}
+                      </small>
+                    )}
+                  </label>
+                  <label className="cycle-form-field">
+                    Data da cobertura
+                    <input
+                      type="date"
+                      required
+                      value={cycleForm.data_cobertura}
+                      onChange={(event) =>
+                        setCycleForm((current) => ({
+                          ...current,
+                          data_cobertura: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="cycle-form-field">
+                    Horário da cobertura
+                    <input
+                      type="time"
+                      value={cycleForm.hora_cobertura}
+                      onChange={(event) =>
+                        setCycleForm((current) => ({
+                          ...current,
+                          hora_cobertura: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="cycle-form-field">
+                    Veterinário
+                    <select
+                      value={cycleForm.veterinario}
+                      onChange={(event) =>
+                        setCycleForm((current) => ({
+                          ...current,
+                          veterinario: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Não informado</option>
+                      {cycleForm.veterinario &&
+                        !reproductionVeterinarians.includes(cycleForm.veterinario) && (
+                          <option value={cycleForm.veterinario}>
+                            {cycleForm.veterinario}
+                          </option>
+                        )}
+                      {reproductionVeterinarians.map((veterinarian) => (
+                        <option value={veterinarian} key={veterinarian}>
+                          {veterinarian}
+                        </option>
+                      ))}
+                    </select>
+                    <small className="reproduction-field-hint">
+                      Prestadores cadastrados com serviço veterinário.
+                    </small>
+                  </label>
+                  <label className="cycle-form-field">
+                    Previsão de parto
+                    <input
+                      type="date"
+                      value={cycleForm.data_previsao_parto}
+                      onChange={(event) =>
+                        setCycleForm((current) => ({
+                          ...current,
+                          data_previsao_parto: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="cycle-form-field cycle-form-field-full">
+                    Descrição
+                    <textarea
+                      rows={3}
+                      maxLength={2000}
+                      value={cycleForm.descricao}
+                      onChange={(event) =>
+                        setCycleForm((current) => ({
+                          ...current,
+                          descricao: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="reproduction-dialog-actions">
+                  <button
+                    type="button"
+                    className="button button-quiet"
+                    onClick={closeCycleForm}
+                  >
+                    Cancelar
+                  </button>
+                  <button className="button button-primary" disabled={isSaving}>
+                    {isSaving ? "Salvando..." : "Salvar ciclo"}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )}
+        {showRecipientForm && (
+          <div
+            className="reproduction-dialog-backdrop"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setShowRecipientForm(false);
+            }}
+          >
+            <section
+              className="reproduction-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="recipient-form-title"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setShowRecipientForm(false);
+              }}
+            >
+              <div className="reproduction-dialog-header">
+                <div>
+                  <span className="eyebrow">Plantel reprodutivo</span>
+                  <h2 id="recipient-form-title">Cadastrar receptora</h2>
+                </div>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Fechar formulário"
+                  onClick={() => setShowRecipientForm(false)}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <form onSubmit={(event) => void handleCreateRecipient(event)}>
+                <div className="cycle-form-grid">
+                  <label className="cycle-form-field">
+                    CTE/Haras
+                    <input type="text" value={tenantName} disabled />
+                  </label>
+                  <label className="cycle-form-field">
+                    Nome da receptora
+                    <input
+                      type="text"
+                      required
+                      maxLength={120}
+                      value={recipientForm.nome}
+                      onChange={(event) =>
+                        setRecipientForm((current) => ({
+                          ...current,
+                          nome: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="cycle-form-field">
+                    Registro da receptora (opcional)
+                    <input
+                      type="text"
+                      maxLength={80}
+                      value={recipientForm.registro_associacao}
+                      onChange={(event) =>
+                        setRecipientForm((current) => ({
+                          ...current,
+                          registro_associacao: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="cycle-form-field">
+                    Local onde está a receptora (opcional)
+                    <input
+                      type="text"
+                      maxLength={160}
+                      value={recipientForm.localizacao}
+                      onChange={(event) =>
+                        setRecipientForm((current) => ({
+                          ...current,
+                          localizacao: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <p className="reproduction-note">
+                  A receptora será salva no cadastro de cavalos deste CTE/Haras.
+                </p>
+                <div className="reproduction-dialog-actions">
+                  <button
+                    type="button"
+                    className="button button-quiet"
+                    onClick={() => setShowRecipientForm(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button className="button button-primary" disabled={isSaving}>
+                    {isSaving ? "Salvando..." : "Salvar receptora"}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )}
+        {selectedCycle && (
+          <div
+            className="reproduction-dialog-backdrop"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setSelectedCycle(null);
+            }}
+          >
+            <section
+              className="reproduction-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cycle-detail-title"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setSelectedCycle(null);
+              }}
+            >
+              <div className="reproduction-dialog-header">
+                <div>
+                  <span className="eyebrow">Acompanhamento</span>
+                  <h2 id="cycle-detail-title">Detalhes do ciclo</h2>
+                </div>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Fechar detalhes"
+                  onClick={() => setSelectedCycle(null)}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <dl className="reproduction-details">
+                <div><dt>Matriz</dt><dd>{selectedCycle.nome_matriz}</dd></div>
+                <div>
+                  <dt>Origem da matriz</dt>
+                  <dd>{selectedCycle.matriz_origem === "INTERNO" ? "Interno" : "Externo"}</dd>
+                </div>
+                {selectedCycle.matriz_externa_registro && (
+                  <div><dt>Registro da matriz</dt><dd>{selectedCycle.matriz_externa_registro}</dd></div>
+                )}
+                <div><dt>Garanhão</dt><dd>{selectedCycle.nome_garanhao}</dd></div>
+                <div>
+                  <dt>Origem do garanhão</dt>
+                  <dd>{selectedCycle.garanhao_origem === "INTERNO" ? "Interno" : "Externo"}</dd>
+                </div>
+                {selectedCycle.garanhao_externo_registro && (
+                  <div><dt>Registro do garanhão</dt><dd>{selectedCycle.garanhao_externo_registro}</dd></div>
+                )}
+                <div><dt>Receptora</dt><dd>{selectedCycle.nome_receptora ?? "Não se aplica"}</dd></div>
+                {selectedCycle.localizacao_receptora && (
+                  <div><dt>Local da receptora</dt><dd>{selectedCycle.localizacao_receptora}</dd></div>
+                )}
+                <div><dt>Tipo</dt><dd>{reproductionTypeLabel(selectedCycle.tipo)}</dd></div>
+                <div><dt>Data da cobertura</dt><dd>{formatReproductionDate(selectedCycle.data_cobertura)}</dd></div>
+                <div><dt>Horário</dt><dd>{selectedCycle.hora_cobertura ?? "—"}</dd></div>
+                <div><dt>Veterinário</dt><dd>{selectedCycle.veterinario ?? "—"}</dd></div>
+                <div><dt>Previsão de parto</dt><dd>{formatReproductionDate(selectedCycle.data_previsao_parto)}</dd></div>
+                <div><dt>Data do parto</dt><dd>{formatReproductionDate(selectedCycle.data_parto_real)}</dd></div>
+                <div><dt>Situação</dt><dd>{reproductionStatusLabel(selectedCycle.status)}</dd></div>
+                <div className="reproduction-details-full">
+                  <dt>Descrição</dt>
+                  <dd>{selectedCycle.descricao ?? "—"}</dd>
+                </div>
+              </dl>
+              <div className="reproduction-dialog-actions">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setSelectedCycle(null)}
+                >
+                  Fechar
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </>
     );
   }

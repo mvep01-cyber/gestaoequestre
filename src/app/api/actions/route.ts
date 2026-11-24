@@ -8,14 +8,41 @@ import { hash } from "bcryptjs";
 type ReproductionCycle = {
   id: string;
   tipo: string;
-  garanhao_id: string;
-  matriz_id: string;
+  garanhao_id: string | null;
+  matriz_id: string | null;
   receptora_id: string | null;
   data_cobertura: string;
+  hora_cobertura: string | null;
+  veterinario: string | null;
+  descricao: string | null;
+  garanhao_origem: "INTERNO" | "EXTERNO";
+  garanhao_externo_nome: string | null;
+  garanhao_externo_registro: string | null;
+  matriz_origem: "INTERNO" | "EXTERNO";
+  matriz_externa_nome: string | null;
+  matriz_externa_registro: string | null;
   status: string;
   data_previsao_parto: string | null;
   data_parto_real: string | null;
   potro_gerado_id: string | null;
+};
+
+type ReproductionCycleInput = {
+  type: "MONTA" | "INSEMINACAO" | "TE";
+  mareOrigin: "INTERNO" | "EXTERNO";
+  mareId: string | null;
+  mareExternalName: string | null;
+  mareExternalRegistration: string | null;
+  sireOrigin: "INTERNO" | "EXTERNO";
+  sireId: string | null;
+  sireExternalName: string | null;
+  sireExternalRegistration: string | null;
+  recipientId: string | null;
+  coverageDate: string;
+  coverageTime: string | null;
+  dueDate: string | null;
+  veterinarian: string | null;
+  description: string | null;
 };
 
 const clientAccountActions = new Set([
@@ -92,6 +119,109 @@ function parseOptionalText(
 function parseOptionalDate(value: unknown): string | null | undefined {
   if (value === undefined || value === null || value === "") return null;
   return isDateOnly(value) ? value : undefined;
+}
+
+function parseReproductionCycleInput(
+  body: Record<string, unknown>,
+): ReproductionCycleInput | null {
+  const mareOrigin = body.mareOrigin ?? "INTERNO";
+  const sireOrigin = body.sireOrigin ?? "INTERNO";
+  if (
+    (mareOrigin !== "INTERNO" && mareOrigin !== "EXTERNO") ||
+    (sireOrigin !== "INTERNO" && sireOrigin !== "EXTERNO") ||
+    (body.type !== "MONTA" &&
+      body.type !== "INSEMINACAO" &&
+      body.type !== "TE") ||
+    !isDateOnly(body.coverageDate)
+  ) {
+    return null;
+  }
+
+  const mareId =
+    mareOrigin === "INTERNO" && isUuid(body.mareId) ? body.mareId : null;
+  const sireId =
+    sireOrigin === "INTERNO" && isUuid(body.sireId) ? body.sireId : null;
+  if (
+    (mareOrigin === "INTERNO" && !mareId) ||
+    (sireOrigin === "INTERNO" && !sireId) ||
+    (mareOrigin === "EXTERNO" &&
+      body.mareId !== undefined &&
+      body.mareId !== null &&
+      body.mareId !== "" ) ||
+    (sireOrigin === "EXTERNO" &&
+      body.sireId !== undefined &&
+      body.sireId !== null &&
+      body.sireId !== "")
+  ) {
+    return null;
+  }
+
+  const mareExternalName = parseOptionalText(body.mareExternalName, 120);
+  const mareExternalRegistration = parseOptionalText(
+    body.mareExternalRegistration,
+    80,
+  );
+  const sireExternalName = parseOptionalText(body.sireExternalName, 120);
+  const sireExternalRegistration = parseOptionalText(
+    body.sireExternalRegistration,
+    80,
+  );
+  const veterinarian = parseOptionalText(body.veterinarian, 120);
+  const description = parseOptionalText(body.description, 2000);
+  const dueDate = parseOptionalDate(body.dueDate);
+  const recipientId =
+    body.recipientId === undefined ||
+    body.recipientId === null ||
+    body.recipientId === ""
+      ? null
+      : isUuid(body.recipientId)
+        ? body.recipientId
+        : undefined;
+  const coverageTime =
+    body.coverageTime === undefined ||
+    body.coverageTime === null ||
+    body.coverageTime === ""
+      ? null
+      : typeof body.coverageTime === "string" &&
+          /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(body.coverageTime)
+        ? body.coverageTime
+        : undefined;
+
+  if (
+    !mareExternalName.valid ||
+    !mareExternalRegistration.valid ||
+    !sireExternalName.valid ||
+    !sireExternalRegistration.valid ||
+    !veterinarian.valid ||
+    !description.valid ||
+    dueDate === undefined ||
+    recipientId === undefined ||
+    coverageTime === undefined ||
+    (mareOrigin === "EXTERNO" && !mareExternalName.value) ||
+    (sireOrigin === "EXTERNO" && !sireExternalName.value)
+  ) {
+    return null;
+  }
+
+  return {
+    type: body.type,
+    mareOrigin,
+    mareId,
+    mareExternalName: mareOrigin === "EXTERNO" ? mareExternalName.value : null,
+    mareExternalRegistration:
+      mareOrigin === "EXTERNO" ? mareExternalRegistration.value : null,
+    sireOrigin,
+    sireId,
+    sireExternalName: sireOrigin === "EXTERNO" ? sireExternalName.value : null,
+    sireExternalRegistration:
+      sireOrigin === "EXTERNO" ? sireExternalRegistration.value : null,
+    recipientId,
+    coverageDate: body.coverageDate,
+    coverageTime,
+    dueDate,
+    veterinarian: veterinarian.value,
+    description: description.value,
+  };
 }
 
 function parseMoney(value: unknown): number | null {
@@ -1061,76 +1191,240 @@ export async function POST(request: Request) {
         return Response.json({ updated: true });
       }
 
+      case "createRecipient": {
+        if (!isManager || !hasTenant || tenantPlan !== "HARAS") {
+          return errorResponse("Reprodução está disponível somente para gestores HARAS.", 403);
+        }
+        const name = sanitizeText(body.name, 120);
+        const registration = parseOptionalText(body.registration, 80);
+        const location = parseOptionalText(body.location, 160);
+        if (!name || !registration.valid || !location.valid) {
+          return errorResponse("Informe um nome válido para a receptora.", 400);
+        }
+        const result = await pool.query<{ id: string }>(
+          `insert into public.equinos (
+             tenant_id, criado_por, nome, origem, categoria, status,
+             registro_associacao, localizacao
+           )
+           values ($1, $2, $3, 'TERCEIRO', 'RECEPTORA', 'DESCANSO', $4, $5)
+           returning id`,
+          [tenantId, user.id, name, registration.value, location.value],
+        );
+        return Response.json(
+          {
+            recipient: {
+              id: result.rows[0].id,
+              nome: name,
+              categoria: "RECEPTORA",
+              registro_associacao: registration.value,
+              localizacao: location.value,
+            },
+          },
+          { status: 201 },
+        );
+      }
+
       case "createCycle": {
         if (!isManager || !hasTenant || tenantPlan !== "HARAS") {
           return errorResponse("Reprodução está disponível somente para gestores HARAS.", 403);
         }
-        if (
-          !isUuid(body.mareId) ||
-          !isUuid(body.sireId) ||
-          (body.recipientId !== null &&
-            body.recipientId !== "" &&
-            !isUuid(body.recipientId)) ||
-          !isDateOnly(body.coverageDate) ||
-          (body.dueDate !== "" && !isDateOnly(body.dueDate)) ||
-          !["MONTA", "INSEMINACAO", "TE"].includes(String(body.type))
-        ) {
+        const fields = parseReproductionCycleInput(body);
+        if (!fields) {
           return errorResponse("Dados do ciclo inválidos.", 400);
         }
 
-        const recipientId =
-          typeof body.recipientId === "string" && body.recipientId
-            ? body.recipientId
-            : null;
-        const horseIds = [body.mareId, body.sireId, ...(recipientId ? [recipientId] : [])];
-        const horses = await pool.query<{ id: string; categoria: string }>(
-          `select id, categoria
+        const horseIds = [
+          fields.mareId,
+          fields.sireId,
+          fields.recipientId,
+        ].filter((id): id is string => Boolean(id));
+        const horses = await pool.query<{
+          id: string;
+          nome: string;
+          categoria: string;
+          localizacao: string | null;
+        }>(
+          `select id, nome, categoria, localizacao
            from public.equinos
           where tenant_id = $1 and id = any($2::uuid[]) and excluido_em is null`,
           [tenantId, horseIds],
         );
-        const mare = horses.rows.find((horse) => horse.id === body.mareId);
-        const sire = horses.rows.find((horse) => horse.id === body.sireId);
-        const recipient = recipientId
-          ? horses.rows.find((horse) => horse.id === recipientId)
+        const mare = fields.mareId
+          ? horses.rows.find((horse) => horse.id === fields.mareId)
+          : null;
+        const sire = fields.sireId
+          ? horses.rows.find((horse) => horse.id === fields.sireId)
+          : null;
+        const recipient = fields.recipientId
+          ? horses.rows.find((horse) => horse.id === fields.recipientId)
           : null;
         if (
-          mare?.categoria !== "MATRIZ" ||
-          sire?.categoria !== "GARANHAO" ||
-          (recipientId && recipient?.categoria !== "RECEPTORA")
+          (fields.mareOrigin === "INTERNO" && mare?.categoria !== "MATRIZ") ||
+          (fields.sireOrigin === "INTERNO" && sire?.categoria !== "GARANHAO") ||
+          (fields.recipientId && recipient?.categoria !== "RECEPTORA")
         ) {
           return errorResponse("Confira as categorias dos animais selecionados.", 400);
         }
 
         const result = await pool.query<ReproductionCycle>(
           `insert into public.reproducao_ciclos (
-             tenant_id, tipo, garanhao_id, matriz_id, receptora_id,
-             data_cobertura, data_previsao_parto, status
+             tenant_id, tipo, garanhao_id, matriz_id,
+             garanhao_origem, garanhao_externo_nome, garanhao_externo_registro,
+             matriz_origem, matriz_externa_nome, matriz_externa_registro,
+             receptora_id, data_cobertura, hora_cobertura, veterinario, descricao,
+             data_previsao_parto, status
            )
-           values ($1, $2, $3, $4, $5, $6, $7, 'AGUARDANDO_EXAME')
+           values (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+             $11, $12, $13, $14, $15, $16, 'AGUARDANDO_EXAME'
+           )
            returning id, tipo, garanhao_id, matriz_id, receptora_id,
-             data_cobertura, status, data_previsao_parto, data_parto_real,
+             garanhao_origem, garanhao_externo_nome, garanhao_externo_registro,
+             matriz_origem, matriz_externa_nome, matriz_externa_registro,
+             data_cobertura, to_char(hora_cobertura, 'HH24:MI') as hora_cobertura,
+             veterinario, descricao, status, data_previsao_parto, data_parto_real,
              potro_gerado_id`,
           [
             tenantId,
-            body.type,
-            body.sireId,
-            body.mareId,
-            recipientId,
-            body.coverageDate,
-            body.dueDate || null,
+            fields.type,
+            fields.sireId,
+            fields.mareId,
+            fields.sireOrigin,
+            fields.sireExternalName,
+            fields.sireExternalRegistration,
+            fields.mareOrigin,
+            fields.mareExternalName,
+            fields.mareExternalRegistration,
+            fields.recipientId,
+            fields.coverageDate,
+            fields.coverageTime,
+            fields.veterinarian,
+            fields.description,
+            fields.dueDate,
           ],
         );
         return Response.json(
           {
             cycle: {
               ...result.rows[0],
-              nome_garanhao: "Garanhão",
-              nome_matriz: "Matriz",
+              nome_garanhao: sire?.nome ?? fields.sireExternalName ?? "",
+              nome_matriz: mare?.nome ?? fields.mareExternalName ?? "",
+              nome_receptora: recipient?.nome ?? null,
+              localizacao_receptora: recipient?.localizacao ?? null,
             },
           },
           { status: 201 },
         );
+      }
+
+      case "updateCycle": {
+        if (!isManager || !hasTenant || tenantPlan !== "HARAS") {
+          return errorResponse("Reprodução está disponível somente para gestores HARAS.", 403);
+        }
+        const fields = parseReproductionCycleInput(body);
+        if (!isUuid(body.id) || !fields) {
+          return errorResponse("Dados do ciclo inválidos.", 400);
+        }
+        const existing = await pool.query<{
+          status: string;
+          potro_gerado_id: string | null;
+        }>(
+          `select status, potro_gerado_id
+           from public.reproducao_ciclos
+           where id = $1 and tenant_id = $2`,
+          [body.id, tenantId],
+        );
+        if (!existing.rowCount) {
+          return errorResponse("Ciclo não encontrado.", 404);
+        }
+        if (
+          existing.rows[0].status === "PARIDA" ||
+          existing.rows[0].potro_gerado_id
+        ) {
+          return errorResponse("Ciclos com parto registrado não podem ser alterados.", 409);
+        }
+
+        const horseIds = [
+          fields.mareId,
+          fields.sireId,
+          fields.recipientId,
+        ].filter((id): id is string => Boolean(id));
+        const horses = await pool.query<{
+          id: string;
+          nome: string;
+          categoria: string;
+          localizacao: string | null;
+        }>(
+          `select id, nome, categoria, localizacao
+           from public.equinos
+           where tenant_id = $1 and id = any($2::uuid[]) and excluido_em is null`,
+          [tenantId, horseIds],
+        );
+        const mare = fields.mareId
+          ? horses.rows.find((horse) => horse.id === fields.mareId)
+          : null;
+        const sire = fields.sireId
+          ? horses.rows.find((horse) => horse.id === fields.sireId)
+          : null;
+        const recipient = fields.recipientId
+          ? horses.rows.find((horse) => horse.id === fields.recipientId)
+          : null;
+        if (
+          (fields.mareOrigin === "INTERNO" && mare?.categoria !== "MATRIZ") ||
+          (fields.sireOrigin === "INTERNO" && sire?.categoria !== "GARANHAO") ||
+          (fields.recipientId && recipient?.categoria !== "RECEPTORA")
+        ) {
+          return errorResponse("Confira as categorias dos animais selecionados.", 400);
+        }
+
+        const result = await pool.query<ReproductionCycle>(
+          `update public.reproducao_ciclos
+           set tipo = $1, garanhao_id = $2, matriz_id = $3,
+               garanhao_origem = $4, garanhao_externo_nome = $5,
+               garanhao_externo_registro = $6, matriz_origem = $7,
+               matriz_externa_nome = $8, matriz_externa_registro = $9,
+               receptora_id = $10, data_cobertura = $11, hora_cobertura = $12,
+               veterinario = $13, descricao = $14, data_previsao_parto = $15
+           where id = $16 and tenant_id = $17 and status <> 'PARIDA'
+             and potro_gerado_id is null
+           returning id, tipo, garanhao_id, matriz_id, receptora_id,
+             garanhao_origem, garanhao_externo_nome, garanhao_externo_registro,
+             matriz_origem, matriz_externa_nome, matriz_externa_registro,
+             data_cobertura, to_char(hora_cobertura, 'HH24:MI') as hora_cobertura,
+             veterinario, descricao, status, data_previsao_parto, data_parto_real,
+             potro_gerado_id`,
+          [
+            fields.type,
+            fields.sireId,
+            fields.mareId,
+            fields.sireOrigin,
+            fields.sireExternalName,
+            fields.sireExternalRegistration,
+            fields.mareOrigin,
+            fields.mareExternalName,
+            fields.mareExternalRegistration,
+            fields.recipientId,
+            fields.coverageDate,
+            fields.coverageTime,
+            fields.veterinarian,
+            fields.description,
+            fields.dueDate,
+            body.id,
+            tenantId,
+          ],
+        );
+        if (!result.rowCount) {
+          return errorResponse("Ciclo não encontrado ou com parto registrado.", 409);
+        }
+        return Response.json({
+          cycle: {
+            ...result.rows[0],
+            nome_garanhao: sire?.nome ?? fields.sireExternalName ?? "",
+            nome_matriz: mare?.nome ?? fields.mareExternalName ?? "",
+            nome_receptora: recipient?.nome ?? null,
+            localizacao_receptora: recipient?.localizacao ?? null,
+          },
+        });
       }
 
       case "updateCycleStatus": {

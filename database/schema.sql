@@ -350,6 +350,7 @@ create table if not exists public.equinos (
   nome_pai text,
   nome_mae text,
   pelagem text,
+  localizacao text,
   origem text not null default 'TERCEIRO' check (origem in ('PROPRIO', 'TERCEIRO')),
   categoria text not null default 'ATLETA'
     check (categoria in ('ATLETA', 'MATRIZ', 'GARANHAO', 'POTRO', 'RECEPTORA')),
@@ -387,6 +388,7 @@ alter table public.equinos
   add column if not exists nome_proprietario text,
   add column if not exists nome_treinador text,
   add column if not exists pelagem text,
+  add column if not exists localizacao text,
   add column if not exists excluido_em timestamptz;
 
 update public.equinos as e
@@ -440,10 +442,19 @@ create table if not exists public.reproducao_ciclos (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants (id) on delete cascade,
   tipo text not null check (tipo in ('MONTA', 'INSEMINACAO', 'TE')),
-  garanhao_id uuid not null,
-  matriz_id uuid not null,
+  garanhao_id uuid,
+  matriz_id uuid,
+  garanhao_origem text not null default 'INTERNO',
+  garanhao_externo_nome text,
+  garanhao_externo_registro text,
+  matriz_origem text not null default 'INTERNO',
+  matriz_externa_nome text,
+  matriz_externa_registro text,
   receptora_id uuid,
   data_cobertura date not null,
+  hora_cobertura time,
+  veterinario text,
+  descricao text,
   status text not null default 'AGUARDANDO_EXAME'
     check (status in ('AGUARDANDO_EXAME', 'PRENHE', 'VAZIA', 'PARIDA')),
   data_previsao_parto date,
@@ -458,8 +469,86 @@ create table if not exists public.reproducao_ciclos (
   constraint ciclos_receptora_tenant_fk
     foreign key (receptora_id, tenant_id) references public.equinos (id, tenant_id),
   constraint ciclos_potro_tenant_fk
-    foreign key (potro_gerado_id, tenant_id) references public.equinos (id, tenant_id)
+    foreign key (potro_gerado_id, tenant_id) references public.equinos (id, tenant_id),
+  constraint ciclos_garanhao_origem_check
+    check (garanhao_origem in ('INTERNO', 'EXTERNO')),
+  constraint ciclos_matriz_origem_check
+    check (matriz_origem in ('INTERNO', 'EXTERNO')),
+  constraint ciclos_garanhao_origem_dados_check check (
+    (garanhao_origem = 'INTERNO' and garanhao_id is not null
+      and garanhao_externo_nome is null and garanhao_externo_registro is null)
+    or (garanhao_origem = 'EXTERNO' and garanhao_id is null
+      and nullif(btrim(garanhao_externo_nome), '') is not null)
+  ),
+  constraint ciclos_matriz_origem_dados_check check (
+    (matriz_origem = 'INTERNO' and matriz_id is not null
+      and matriz_externa_nome is null and matriz_externa_registro is null)
+    or (matriz_origem = 'EXTERNO' and matriz_id is null
+      and nullif(btrim(matriz_externa_nome), '') is not null)
+  )
 );
+
+alter table public.reproducao_ciclos
+  alter column garanhao_id drop not null,
+  alter column matriz_id drop not null,
+  add column if not exists garanhao_origem text not null default 'INTERNO',
+  add column if not exists garanhao_externo_nome text,
+  add column if not exists garanhao_externo_registro text,
+  add column if not exists matriz_origem text not null default 'INTERNO',
+  add column if not exists matriz_externa_nome text,
+  add column if not exists matriz_externa_registro text,
+  add column if not exists hora_cobertura time,
+  add column if not exists veterinario text,
+  add column if not exists descricao text;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'ciclos_garanhao_origem_check'
+      and conrelid = 'public.reproducao_ciclos'::regclass
+  ) then
+    alter table public.reproducao_ciclos
+      add constraint ciclos_garanhao_origem_check
+      check (garanhao_origem in ('INTERNO', 'EXTERNO'));
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'ciclos_matriz_origem_check'
+      and conrelid = 'public.reproducao_ciclos'::regclass
+  ) then
+    alter table public.reproducao_ciclos
+      add constraint ciclos_matriz_origem_check
+      check (matriz_origem in ('INTERNO', 'EXTERNO'));
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'ciclos_garanhao_origem_dados_check'
+      and conrelid = 'public.reproducao_ciclos'::regclass
+  ) then
+    alter table public.reproducao_ciclos
+      add constraint ciclos_garanhao_origem_dados_check check (
+        (garanhao_origem = 'INTERNO' and garanhao_id is not null
+          and garanhao_externo_nome is null and garanhao_externo_registro is null)
+        or (garanhao_origem = 'EXTERNO' and garanhao_id is null
+          and nullif(btrim(garanhao_externo_nome), '') is not null)
+      );
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'ciclos_matriz_origem_dados_check'
+      and conrelid = 'public.reproducao_ciclos'::regclass
+  ) then
+    alter table public.reproducao_ciclos
+      add constraint ciclos_matriz_origem_dados_check check (
+        (matriz_origem = 'INTERNO' and matriz_id is not null
+          and matriz_externa_nome is null and matriz_externa_registro is null)
+        or (matriz_origem = 'EXTERNO' and matriz_id is null
+          and nullif(btrim(matriz_externa_nome), '') is not null)
+      );
+  end if;
+end
+$$;
 
 create table if not exists public.tratamentos_medicamentos (
   id uuid primary key default gen_random_uuid(),
@@ -917,15 +1006,18 @@ begin
 
   insert into public.equinos (
     tenant_id, proprietario_id, nome, raca, sexo, data_nascimento,
-    origem, categoria, status, pai_id, mae_id
+    nome_pai, nome_mae, origem, categoria, status, pai_id, mae_id
   )
   values (
     new.tenant_id,
     mare.proprietario_id,
-    'Potro de ' || mare.nome || ' - ' || coalesce(new.data_parto_real, current_date)::text,
-    mare.raca,
+    'Potro de ' || coalesce(mare.nome, new.matriz_externa_nome) || ' - '
+      || coalesce(new.data_parto_real, current_date)::text,
+    coalesce(mare.raca, array[]::text[]),
     'INDEFINIDO',
     coalesce(new.data_parto_real, current_date),
+    coalesce(sire.nome, new.garanhao_externo_nome),
+    coalesce(mare.nome, new.matriz_externa_nome),
     'PROPRIO',
     'POTRO',
     'DESCANSO',

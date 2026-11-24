@@ -23,6 +23,7 @@ type HorseRecord = {
   registro_associacao: string | null;
   sexo: string;
   pelagem: string | null;
+  localizacao?: string | null;
   foto_url?: string | null;
   nome_proprietario?: string | null;
   nome_treinador?: string | null;
@@ -104,16 +105,27 @@ type FinanceEntry = {
 type ReproductionCycle = {
   id: string;
   tipo: string;
-  garanhao_id: string;
-  matriz_id: string;
+  garanhao_id: string | null;
+  matriz_id: string | null;
   receptora_id: string | null;
   data_cobertura: string;
+  hora_cobertura: string | null;
+  veterinario: string | null;
+  descricao: string | null;
+  garanhao_origem: "INTERNO" | "EXTERNO";
+  garanhao_externo_nome: string | null;
+  garanhao_externo_registro: string | null;
+  matriz_origem: "INTERNO" | "EXTERNO";
+  matriz_externa_nome: string | null;
+  matriz_externa_registro: string | null;
   status: string;
   data_previsao_parto: string | null;
   data_parto_real: string | null;
   potro_gerado_id: string | null;
   nome_garanhao: string;
   nome_matriz: string;
+  nome_receptora: string | null;
+  localizacao_receptora: string | null;
 };
 
 const demoHorses: HorseRecord[] = [
@@ -197,12 +209,23 @@ const demoCycles: ReproductionCycle[] = [
     matriz_id: "demo-3",
     receptora_id: null,
     data_cobertura: "2026-10-15",
+    hora_cobertura: null,
+    veterinario: null,
+    descricao: null,
+    garanhao_origem: "INTERNO",
+    garanhao_externo_nome: null,
+    garanhao_externo_registro: null,
+    matriz_origem: "INTERNO",
+    matriz_externa_nome: null,
+    matriz_externa_registro: null,
     status: "PRENHE",
     data_previsao_parto: "2027-08-20",
     data_parto_real: null,
     potro_gerado_id: null,
     nome_garanhao: "Trovão do Vale",
     nome_matriz: "Lua Serena",
+    nome_receptora: null,
+    localizacao_receptora: null,
   },
 ];
 
@@ -349,7 +372,7 @@ export default async function DashboardPage({
         `select e.id, e.proprietario_id, e.nome, e.baia, e.raca, e.categoria, e.status,
                   e.nome_pai, e.nome_mae,
                   e.data_nascimento::text as data_nascimento,
-                  e.registro_associacao, e.sexo, e.pelagem, e.foto_url,
+                  e.registro_associacao, e.sexo, e.pelagem, e.localizacao, e.foto_url,
                   e.nome_proprietario, e.nome_treinador,
                   e.chip_resenha, e.alimentacao_diaria,
                   e.valor_mensalidade::double precision as valor_mensalidade,
@@ -514,12 +537,13 @@ export default async function DashboardPage({
     financeResult,
     cycleCountResult,
     cyclesResult,
+    reproductionVeterinariansResult,
   ] = await Promise.all([
     pool.query<HorseRecord>(
       `select e.id, e.proprietario_id, e.nome, e.baia, e.raca, e.categoria, e.status,
               e.nome_pai, e.nome_mae,
               e.data_nascimento::text as data_nascimento,
-              e.registro_associacao, e.sexo, e.pelagem, e.foto_url,
+              e.registro_associacao, e.sexo, e.pelagem, e.localizacao, e.foto_url,
               e.nome_proprietario, e.nome_treinador,
               e.chip_resenha, e.alimentacao_diaria,
               e.valor_mensalidade::double precision as valor_mensalidade,
@@ -646,20 +670,40 @@ export default async function DashboardPage({
       ? pool.query<ReproductionCycle & { data_cobertura: string }>(
           `select
              rc.id, rc.tipo, rc.garanhao_id, rc.matriz_id, rc.receptora_id,
-             rc.data_cobertura, rc.status, rc.data_previsao_parto,
+             rc.garanhao_origem, rc.garanhao_externo_nome,
+             rc.garanhao_externo_registro, rc.matriz_origem,
+             rc.matriz_externa_nome, rc.matriz_externa_registro,
+             rc.data_cobertura,
+             to_char(rc.hora_cobertura, 'HH24:MI') as hora_cobertura,
+             rc.veterinario, rc.descricao, rc.status, rc.data_previsao_parto,
              rc.data_parto_real, rc.potro_gerado_id,
-             garanhao.nome as nome_garanhao, matriz.nome as nome_matriz
+             coalesce(garanhao.nome, rc.garanhao_externo_nome) as nome_garanhao,
+             coalesce(matriz.nome, rc.matriz_externa_nome) as nome_matriz,
+             receptora.nome as nome_receptora,
+             receptora.localizacao as localizacao_receptora
            from public.reproducao_ciclos as rc
-           join public.equinos as garanhao
+           left join public.equinos as garanhao
              on garanhao.id = rc.garanhao_id and garanhao.tenant_id = rc.tenant_id
-           join public.equinos as matriz
+           left join public.equinos as matriz
              on matriz.id = rc.matriz_id and matriz.tenant_id = rc.tenant_id
+           left join public.equinos as receptora
+             on receptora.id = rc.receptora_id and receptora.tenant_id = rc.tenant_id
            where rc.tenant_id = $1
            order by rc.data_cobertura desc
            limit 30`,
           [tenantId],
         )
       : Promise.resolve({ rows: [] } as { rows: ReproductionCycle[] }),
+    tenantPlan === "HARAS" && isManager
+      ? pool.query<{ nome: string }>(
+          `select distinct nome
+           from public.prestadores_servicos
+           where tenant_id = $1 and servicos ilike '%veterin%'
+             and btrim(nome) <> ''
+           order by nome`,
+          [tenantId],
+        )
+      : Promise.resolve({ rows: [] as { nome: string }[] }),
   ]);
 
   const horses = horseResult.rows;
@@ -703,6 +747,9 @@ export default async function DashboardPage({
         valor: Number(row.valor),
       }))}
       reproductionCycles={cyclesResult.rows}
+      reproductionVeterinarians={reproductionVeterinariansResult.rows.map(
+        (row) => row.nome,
+      )}
       clients={ownerResult.rows.map((owner) => ({
         ...owner,
         numero_socio_abccmm:
