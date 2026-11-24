@@ -389,6 +389,7 @@ alter table public.equinos
   add column if not exists nome_treinador text,
   add column if not exists pelagem text,
   add column if not exists localizacao text,
+  add column if not exists receptora_disponivel boolean not null default true,
   add column if not exists excluido_em timestamptz;
 
 update public.equinos as e

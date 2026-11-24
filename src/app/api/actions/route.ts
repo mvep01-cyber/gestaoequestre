@@ -1497,14 +1497,15 @@ export async function POST(request: Request) {
         if (!name || !registration.valid || !location.valid) {
           return errorResponse("Informe um nome válido para a receptora.", 400);
         }
+        const available = body.available !== false;
         const result = await pool.query<{ id: string }>(
           `insert into public.equinos (
              tenant_id, criado_por, nome, origem, categoria, status,
-             registro_associacao, localizacao
+             registro_associacao, localizacao, receptora_disponivel
            )
-           values ($1, $2, $3, 'TERCEIRO', 'RECEPTORA', 'DESCANSO', $4, $5)
+           values ($1, $2, $3, 'TERCEIRO', 'RECEPTORA', 'DESCANSO', $4, $5, $6)
            returning id`,
-          [tenantId, user.id, name, registration.value, location.value],
+          [tenantId, user.id, name, registration.value, location.value, available],
         );
         return Response.json(
           {
@@ -1514,6 +1515,7 @@ export async function POST(request: Request) {
               categoria: "RECEPTORA",
               registro_associacao: registration.value,
               localizacao: location.value,
+              receptora_disponivel: available,
             },
           },
           { status: 201 },
@@ -1561,6 +1563,16 @@ export async function POST(request: Request) {
         ) {
           return errorResponse("Confira as categorias dos animais selecionados.", 400);
         }
+        if (fields.recipientId) {
+          const reserved = await pool.query(
+            `update public.equinos set receptora_disponivel = false
+             where id = $1 and tenant_id = $2 and receptora_disponivel`,
+            [fields.recipientId, tenantId],
+          );
+          if (!reserved.rowCount) {
+            return errorResponse("A receptora selecionada não está disponível.", 409);
+          }
+        }
 
         const result = await pool.query<ReproductionCycle>(
           `insert into public.reproducao_ciclos (
@@ -1598,7 +1610,16 @@ export async function POST(request: Request) {
             fields.description,
             fields.dueDate,
           ],
-        );
+        ).catch(async (error: unknown) => {
+          if (fields.recipientId) {
+            await pool.query(
+              `update public.equinos set receptora_disponivel = true
+               where id = $1 and tenant_id = $2`,
+              [fields.recipientId, tenantId],
+            );
+          }
+          throw error;
+        });
         return Response.json(
           {
             cycle: {
@@ -1624,8 +1645,9 @@ export async function POST(request: Request) {
         const existing = await pool.query<{
           status: string;
           potro_gerado_id: string | null;
+          receptora_id: string | null;
         }>(
-          `select status, potro_gerado_id
+          `select status, potro_gerado_id, receptora_id
            from public.reproducao_ciclos
            where id = $1 and tenant_id = $2`,
           [body.id, tenantId],
@@ -1672,6 +1694,26 @@ export async function POST(request: Request) {
         ) {
           return errorResponse("Confira as categorias dos animais selecionados.", 400);
         }
+        const previousRecipientId = existing.rows[0].receptora_id;
+        const recipientChanged = fields.recipientId !== previousRecipientId;
+        if (recipientChanged && fields.recipientId) {
+          const reserved = await pool.query(
+            `update public.equinos set receptora_disponivel = false
+             where id = $1 and tenant_id = $2 and receptora_disponivel`,
+            [fields.recipientId, tenantId],
+          );
+          if (!reserved.rowCount) {
+            return errorResponse("A receptora selecionada não está disponível.", 409);
+          }
+        }
+        const releaseRecipient = (id: string | null) =>
+          id
+            ? pool.query(
+                `update public.equinos set receptora_disponivel = true
+                 where id = $1 and tenant_id = $2`,
+                [id, tenantId],
+              )
+            : Promise.resolve();
 
         const result = await pool.query<ReproductionCycle>(
           `update public.reproducao_ciclos
@@ -1708,10 +1750,15 @@ export async function POST(request: Request) {
             body.id,
             tenantId,
           ],
-        );
+        ).catch(async (error: unknown) => {
+          if (recipientChanged) await releaseRecipient(fields.recipientId);
+          throw error;
+        });
         if (!result.rowCount) {
+          if (recipientChanged) await releaseRecipient(fields.recipientId);
           return errorResponse("Ciclo não encontrado ou com parto registrado.", 409);
         }
+        if (recipientChanged) await releaseRecipient(previousRecipientId);
         return Response.json({
           cycle: {
             ...result.rows[0],

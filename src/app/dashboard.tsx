@@ -58,6 +58,7 @@ type HorseRecord = {
   sexo: string;
   pelagem: string | null;
   localizacao?: string | null;
+  receptora_disponivel?: boolean;
   foto_url?: string | null;
   nome_proprietario?: string | null;
   nome_treinador?: string | null;
@@ -164,7 +165,7 @@ type ReproductionCycle = {
 
 type ReproductionRecipientOption = Pick<
   HorseRecord,
-  "id" | "nome" | "categoria" | "localizacao" | "registro_associacao"
+  "id" | "nome" | "categoria" | "localizacao" | "registro_associacao" | "receptora_disponivel"
 >;
 
 type ClientRecord = {
@@ -273,12 +274,18 @@ type RecipientFormState = {
   nome: string;
   registro_associacao: string;
   localizacao: string;
+  disponivel: boolean;
 };
+
+function createDemoId(prefix: string) {
+  return `${prefix}-${Date.now()}`;
+}
 
 const recipientFormDefaults: RecipientFormState = {
   nome: "",
   registro_associacao: "",
   localizacao: "",
+  disponivel: true,
 };
 
 const clientFormDefaults: ClientFormState = {
@@ -669,6 +676,11 @@ export function Dashboard({
   const horses = demo ? demoHorses : initialHorses;
   const [createdReproductionRecipients, setCreatedReproductionRecipients] =
     useState<ReproductionRecipientOption[]>([]);
+  const [recipientAvailability, setRecipientAvailability] = useState<
+    Record<string, boolean>
+  >({});
+  const isRecipientAvailable = (horse: { id: string; receptora_disponivel?: boolean }) =>
+    recipientAvailability[horse.id] ?? horse.receptora_disponivel ?? true;
   const reproductionHorses = [
     ...horses,
     ...createdReproductionRecipients.filter(
@@ -1125,6 +1137,15 @@ export function Dashboard({
     setCycleEditingId(null);
   }
 
+  function markRecipientUsed(previousId: string | null, nextId: string | null) {
+    setRecipientAvailability((current) => {
+      const next = { ...current };
+      if (previousId && previousId !== nextId) next[previousId] = true;
+      if (nextId) next[nextId] = false;
+      return next;
+    });
+  }
+
   async function handleSaveCycle(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback("");
@@ -1162,7 +1183,7 @@ export function Dashboard({
           (cycle) => cycle.id === cycleEditingId,
         );
         const cycle: ReproductionCycle = {
-          id: cycleEditingId ?? `demo-cycle-${Date.now()}`,
+          id: cycleEditingId ?? createDemoId("demo-cycle"),
           tipo: fields.type,
           garanhao_id: fields.sireId,
           matriz_id: fields.mareId,
@@ -1222,6 +1243,10 @@ export function Dashboard({
         );
       }
 
+      markRecipientUsed(
+        reproductionCycles.find((item) => item.id === cycleEditingId)?.receptora_id ?? null,
+        fields.recipientId,
+      );
       setCycleForm({ ...cycleFormDefaults });
       setShowCycleForm(false);
       setFeedback(
@@ -1253,12 +1278,14 @@ export function Dashboard({
           categoria: "RECEPTORA",
           registro_associacao: recipientForm.registro_associacao.trim() || null,
           localizacao: recipientForm.localizacao.trim() || null,
+          receptora_disponivel: recipientForm.disponivel,
         };
       } else {
         const result = await postDashboardAction("createRecipient", {
           name,
           registration: recipientForm.registro_associacao,
           location: recipientForm.localizacao,
+          available: recipientForm.disponivel,
         });
         const created = isRecord(result) ? result.recipient : null;
         if (!isReproductionRecipient(created)) {
@@ -1636,7 +1663,15 @@ export function Dashboard({
                     <td>{horse.raca.join(", ") || "—"}</td>
                     <td>{horse.baia || "—"}</td>
                     <td>{horse.categoria}</td>
-                    <td><span className={`status-pill status-${horse.status.toLowerCase()}`}>{getStatusLabel(horse.status)}</span></td>
+                    <td>
+                      {horse.categoria === "RECEPTORA" ? (
+                        <span className={`status-pill ${isRecipientAvailable(horse) ? "" : "status-descanso"}`}>
+                          {isRecipientAvailable(horse) ? "Disponível" : "Indisponível"}
+                        </span>
+                      ) : (
+                        <span className={`status-pill status-${horse.status.toLowerCase()}`}>{getStatusLabel(horse.status)}</span>
+                      )}
+                    </td>
                     <td>{horse.chip_resenha || "—"}</td>
                     <td>{horse.alimentacao_diaria || "—"}</td>
                     <td>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(horse.valor_mensalidade ?? 0)}</td>
@@ -1845,6 +1880,8 @@ export function Dashboard({
     const selectedRecipient = reproductionHorses.find(
       (horse) => horse.id === cycleForm.receptora_id,
     );
+    const editingRecipientId =
+      reproductionCycles.find((cycle) => cycle.id === cycleEditingId)?.receptora_id ?? null;
 
     return (
       <>
@@ -2072,10 +2109,24 @@ export function Dashboard({
                       <option value="">Não se aplica</option>
                       {reproductionHorses
                         .filter((horse) => horse.categoria === "RECEPTORA")
-                        .map((horse) => (
-                          <option value={horse.id} key={horse.id}>{horse.nome}</option>
-                        ))}
+                        .map((horse) => {
+                          const available = isRecipientAvailable(horse);
+                          const isCurrent = horse.id === editingRecipientId;
+                          return (
+                            <option
+                              value={horse.id}
+                              key={horse.id}
+                              disabled={!available && !isCurrent}
+                            >
+                             {horse.nome} — {available ? "Disponível" : "Indisponível"}
+                            </option>
+                          );
+                        })}
                     </select>
+                    <small className="reproduction-field-hint">
+                      A situação aparece ao lado do nome; só é possível escolher receptoras
+                      disponíveis. Ao salvar, a receptora passa a ficar indisponível.
+                    </small>
                     {selectedRecipient && (
                       <small className="reproduction-field-hint">
                         Local: {selectedRecipient.localizacao || "não informado"}
@@ -2260,9 +2311,26 @@ export function Dashboard({
                       }
                     />
                   </label>
+                  <label className="cycle-form-field">
+                    Disponibilidade
+                    <select
+                      value={recipientForm.disponivel ? "SIM" : "NAO"}
+                      onChange={(event) =>
+                        setRecipientForm((current) => ({
+                          ...current,
+                          disponivel: event.target.value === "SIM",
+                        }))
+                      }
+                    >
+                      <option value="SIM">Disponível</option>
+                      <option value="NAO">Indisponível</option>
+                    </select>
+                  </label>
                 </div>
                 <p className="reproduction-note">
-                  A receptora será salva no cadastro de cavalos deste CTE/Haras.
+                  A receptora será salva no cadastro de cavalos deste CTE/Haras. Ela só pode
+                  ser escolhida em uma cobertura enquanto estiver disponível e fica
+                  indisponível ao ser usada.
                 </p>
                 <div className="reproduction-dialog-actions">
                   <button

@@ -25,6 +25,7 @@ type HorseRecord = {
   sexo: string;
   pelagem: string | null;
   localizacao?: string | null;
+  receptora_disponivel?: boolean;
   foto_url?: string | null;
   nome_proprietario?: string | null;
   nome_treinador?: string | null;
@@ -373,7 +374,8 @@ export default async function DashboardPage({
         `select e.id, e.proprietario_id, e.nome, e.baia, e.raca, e.categoria, e.status,
                   e.nome_pai, e.nome_mae,
                   e.data_nascimento::text as data_nascimento,
-                  e.registro_associacao, e.sexo, e.pelagem, e.localizacao, e.foto_url,
+                  e.registro_associacao, e.sexo, e.pelagem, e.localizacao,
+                  e.receptora_disponivel, e.foto_url,
                   e.nome_proprietario, e.nome_treinador,
                   e.chip_resenha, e.alimentacao_diaria,
                   e.valor_mensalidade::double precision as valor_mensalidade,
@@ -547,7 +549,8 @@ export default async function DashboardPage({
       `select e.id, e.proprietario_id, e.nome, e.baia, e.raca, e.categoria, e.status,
               e.nome_pai, e.nome_mae,
               e.data_nascimento::text as data_nascimento,
-              e.registro_associacao, e.sexo, e.pelagem, e.localizacao, e.foto_url,
+              e.registro_associacao, e.sexo, e.pelagem, e.localizacao,
+              e.receptora_disponivel, e.foto_url,
               e.nome_proprietario, e.nome_treinador,
               e.chip_resenha, e.alimentacao_diaria,
               e.valor_mensalidade::double precision as valor_mensalidade,
