@@ -1145,6 +1145,66 @@ input:focus-visible {
   grid-column: 1 / -1;
 }
 
+.care-table {
+  min-width: 940px;
+}
+
+.care-weekdays {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+
+.care-weekdays legend {
+  padding: 0 5px;
+  color: #35473b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.care-weekday-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.care-weekday-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #35473b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.care-weekday-list input {
+  width: auto;
+  min-height: auto;
+}
+
+.care-time-list {
+  display: grid;
+  gap: 8px;
+}
+
+.care-time-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.care-time-row .cycle-form-field {
+  flex: 1;
+}
+
+.care-weekdays > .button {
+  justify-self: start;
+}
+
 .category-list {
   display: grid;
 }

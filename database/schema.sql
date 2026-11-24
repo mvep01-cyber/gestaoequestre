@@ -625,6 +625,20 @@ create table if not exists public.agenda_treinos (
     foreign key (treinador_id, tenant_id) references public.usuarios (id, tenant_id)
 );
 
+alter table public.agenda_treinos
+  add column if not exists data_inicio date,
+  add column if not exists data_fim date,
+  add column if not exists dias_semana smallint[],
+  add column if not exists hora_inicio time,
+  add column if not exists hora_fim time,
+  add column if not exists treinador_nome text;
+
+alter table public.tratamentos_medicamentos
+  add column if not exists prestador_nome text,
+  add column if not exists dias_semana smallint[],
+  add column if not exists horarios time[],
+  add column if not exists observacoes text;
+
 create table if not exists public.contas_bancarias (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants (id) on delete cascade,

@@ -56,6 +56,10 @@ const clientAccountActions = new Set([
   "deleteFinanceEntry",
   "generateBilling",
   "payFinanceEntry",
+  "createTreatment",
+  "updateTreatment",
+  "createTraining",
+  "updateTraining",
 ]);
 
 const financeCategories = new Set([
@@ -610,6 +614,140 @@ function isRegistrationType(value: unknown): value is "CTE" | "HARAS" {
   return value === "CTE" || value === "HARAS";
 }
 
+const treatmentTypes = new Set([
+  "MEDICAMENTO",
+  "VACINA",
+  "VERMIFUGO",
+  "VETERINARIO",
+  "FERRAGEAMENTO",
+]);
+const maxScheduledApplications = 1000;
+
+function isTime(value: unknown): value is string {
+  return typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+function parseWeekdays(value: unknown): number[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const days = new Set<number>();
+  for (const day of value) {
+    if (!Number.isInteger(day) || (day as number) < 1 || (day as number) > 7) {
+      return null;
+    }
+    days.add(day as number);
+  }
+  return Array.from(days).sort((a, b) => a - b);
+}
+
+function countScheduledDays(start: string, end: string, weekdays: number[]) {
+  let total = 0;
+  const cursor = new Date(`${start}T00:00:00.000Z`);
+  const last = new Date(`${end}T00:00:00.000Z`);
+  while (cursor <= last) {
+    const isoDay = cursor.getUTCDay() === 0 ? 7 : cursor.getUTCDay();
+    if (weekdays.includes(isoDay)) total += 1;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return total;
+}
+
+function parseTreatmentInput(body: Record<string, unknown>) {
+  const times = Array.isArray(body.times) ? body.times : [];
+  const weekdays = parseWeekdays(body.weekdays);
+  const description = sanitizeText(body.description, 300);
+  const dose = parseOptionalText(body.dose, 160);
+  const provider = parseOptionalText(body.provider, 120);
+  const notes = parseOptionalText(body.notes, 2000);
+  if (
+    !isUuid(body.horseId) ||
+    typeof body.type !== "string" ||
+    !treatmentTypes.has(body.type) ||
+    !description ||
+    !dose.valid ||
+    !provider.valid ||
+    !notes.valid ||
+    !isDateOnly(body.startDate) ||
+    !isDateOnly(body.endDate) ||
+    !weekdays ||
+    times.length === 0 ||
+    times.length > 12 ||
+    !times.every(isTime)
+  ) {
+    return { error: "Confira os dados do tratamento." } as const;
+  }
+  if (body.endDate < body.startDate) {
+    return { error: "A data final não pode ser anterior à data inicial." } as const;
+  }
+  const uniqueTimes = Array.from(new Set(times as string[])).sort();
+  if (
+    countScheduledDays(body.startDate, body.endDate, weekdays) *
+      uniqueTimes.length >
+    maxScheduledApplications
+  ) {
+    return { error: "O período gera aplicações demais; reduza o intervalo." } as const;
+  }
+  if (countScheduledDays(body.startDate, body.endDate, weekdays) === 0) {
+    return { error: "Nenhum dia selecionado ocorre no período informado." } as const;
+  }
+  return {
+    fields: {
+      horseId: body.horseId,
+      type: body.type,
+      description,
+      dose: dose.value,
+      provider: provider.value,
+      notes: notes.value,
+      startDate: body.startDate,
+      endDate: body.endDate,
+      weekdays,
+      times: uniqueTimes,
+    },
+  } as const;
+}
+
+function parseTrainingInput(body: Record<string, unknown>) {
+  const weekdays = parseWeekdays(body.weekdays);
+  const activity = sanitizeText(body.activity, 160);
+  const trainer = parseOptionalText(body.trainer, 120);
+  const notes = parseOptionalText(body.notes, 2000);
+  const endTime = body.endTime === "" || body.endTime === undefined ? null : body.endTime;
+  if (
+    !isUuid(body.horseId) ||
+    !activity ||
+    !trainer.valid ||
+    !notes.valid ||
+    !isDateOnly(body.startDate) ||
+    !isDateOnly(body.endDate) ||
+    !weekdays ||
+    !isTime(body.startTime) ||
+    (endTime !== null && !isTime(endTime))
+  ) {
+    return { error: "Confira os dados do treino." } as const;
+  }
+  if (body.endDate < body.startDate) {
+    return { error: "A data final não pode ser anterior à data inicial." } as const;
+  }
+  if (endTime !== null && endTime <= body.startTime) {
+    return { error: "O horário de fim deve ser posterior ao de início." } as const;
+  }
+  if (countScheduledDays(body.startDate, body.endDate, weekdays) === 0) {
+    return { error: "Nenhum dia selecionado ocorre no período informado." } as const;
+  }
+  return {
+    fields: {
+      horseId: body.horseId,
+      activity,
+      trainer: trainer.value,
+      notes: notes.value,
+      startDate: body.startDate,
+      endDate: body.endDate,
+      weekdays,
+      startTime: body.startTime,
+      endTime,
+    },
+  } as const;
+}
+
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) {
     return errorResponse("Origem da solicitação inválida.", 403);
@@ -906,6 +1044,163 @@ export async function POST(request: Request) {
           return errorResponse("Treino não encontrado ou já concluído.", 404);
         }
         return Response.json({ updated: true });
+      }
+
+      case "createTreatment":
+      case "updateTreatment": {
+        if (!hasTenant || !(isManager || canManageHorses)) {
+          return errorResponse("Este perfil não tem permissão para agendar tratamentos.", 403);
+        }
+        const isUpdate = body.action === "updateTreatment";
+        if (isUpdate && !isUuid(body.id)) {
+          return errorResponse("Tratamento inválido.", 400);
+        }
+        const parsed = parseTreatmentInput(body);
+        if (!parsed.fields) {
+          return errorResponse(parsed.error ?? "Dados inválidos.", 400);
+        }
+        const fields = parsed.fields;
+        const horse = await pool.query(
+          `select 1 from public.equinos
+           where id = $1 and tenant_id = $2 and excluido_em is null
+             and ($3::boolean or criado_por = $4)`,
+          [fields.horseId, tenantId, isManager, user.id],
+        );
+        if (!horse.rowCount) {
+          return errorResponse("Cavalo não encontrado neste centro.", 404);
+        }
+
+        const client = await pool.connect();
+        try {
+          await client.query("begin");
+          let treatmentId: string;
+          if (isUpdate) {
+            const updated = await client.query<{ id: string }>(
+              `update public.tratamentos_medicamentos as tm
+               set equino_id = $3, tipo = $4, descricao = $5, dose_via = $6,
+                   data_inicio = $7, data_fim = $8, dias_semana = $9::smallint[],
+                   horarios = $10::time[], prestador_nome = $11, observacoes = $12
+               where tm.id = $1 and tm.tenant_id = $2
+                 and exists (
+                   select 1 from public.equinos as e
+                   where e.id = tm.equino_id and e.tenant_id = tm.tenant_id
+                     and ($13::boolean or e.criado_por = $14)
+                 )
+               returning tm.id`,
+              [
+                body.id, tenantId, fields.horseId, fields.type, fields.description,
+                fields.dose, fields.startDate, fields.endDate, fields.weekdays,
+                fields.times, fields.provider, fields.notes, isManager, user.id,
+              ],
+            );
+            if (!updated.rowCount) {
+              await client.query("rollback");
+              return errorResponse("Tratamento não encontrado.", 404);
+            }
+            treatmentId = updated.rows[0].id;
+            await client.query(
+              `delete from public.medicamentos_aplicacoes
+               where tratamento_id = $1 and tenant_id = $2 and status = 'PENDENTE'`,
+              [treatmentId, tenantId],
+            );
+          } else {
+            const inserted = await client.query<{ id: string }>(
+              `insert into public.tratamentos_medicamentos (
+                 tenant_id, equino_id, tipo, descricao, dose_via, data_inicio, data_fim,
+                 dias_semana, horarios, prestador_nome, observacoes
+               )
+               values ($1, $2, $3, $4, $5, $6, $7, $8::smallint[], $9::time[], $10, $11)
+               returning id`,
+              [
+                tenantId, fields.horseId, fields.type, fields.description, fields.dose,
+                fields.startDate, fields.endDate, fields.weekdays, fields.times,
+                fields.provider, fields.notes,
+              ],
+            );
+            treatmentId = inserted.rows[0].id;
+          }
+          await client.query(
+            `insert into public.medicamentos_aplicacoes (tenant_id, tratamento_id, data_hora_prevista)
+             select $1::uuid, $2::uuid, (d::date + h) at time zone 'America/Sao_Paulo'
+             from generate_series($3::timestamp, $4::timestamp, interval '1 day') as d
+             cross join unnest($6::time[]) as h
+             where extract(isodow from d)::int = any($5::int[])
+               and not exists (
+                 select 1 from public.medicamentos_aplicacoes as ma
+                 where ma.tratamento_id = $2
+                   and ma.data_hora_prevista = (d::date + h) at time zone 'America/Sao_Paulo'
+               )`,
+            [tenantId, treatmentId, fields.startDate, fields.endDate, fields.weekdays, fields.times],
+          );
+          await client.query("commit");
+          return Response.json({ id: treatmentId }, { status: isUpdate ? 200 : 201 });
+        } catch (error) {
+          await client.query("rollback").catch(() => undefined);
+          throw error;
+        } finally {
+          client.release();
+        }
+      }
+
+      case "createTraining":
+      case "updateTraining": {
+        if (!hasTenant || !(isManager || canManageHorses)) {
+          return errorResponse("Este perfil não tem permissão para programar treinos.", 403);
+        }
+        const isUpdate = body.action === "updateTraining";
+        if (isUpdate && !isUuid(body.id)) {
+          return errorResponse("Treino inválido.", 400);
+        }
+        const parsed = parseTrainingInput(body);
+        if (!parsed.fields) {
+          return errorResponse(parsed.error ?? "Dados inválidos.", 400);
+        }
+        const fields = parsed.fields;
+        const horse = await pool.query(
+          `select 1 from public.equinos
+           where id = $1 and tenant_id = $2 and excluido_em is null
+             and ($3::boolean or criado_por = $4)`,
+          [fields.horseId, tenantId, isManager, user.id],
+        );
+        if (!horse.rowCount) {
+          return errorResponse("Cavalo não encontrado neste centro.", 404);
+        }
+        const params = [
+          tenantId, fields.horseId, fields.activity, fields.trainer, fields.notes,
+          fields.startDate, fields.endDate, fields.weekdays, fields.startTime,
+          fields.endTime,
+        ];
+        const result = isUpdate
+          ? await pool.query<{ id: string }>(
+              `update public.agenda_treinos as at
+               set equino_id = $2, tipo_atividade = $3, treinador_nome = $4,
+                   observacoes = $5, data_inicio = $6, data_fim = $7,
+                   dias_semana = $8::smallint[], hora_inicio = $9::time,
+                   hora_fim = $10::time,
+                   data_hora = ($6::date + $9::time) at time zone 'America/Sao_Paulo'
+               where at.id = $11 and at.tenant_id = $1
+                 and exists (
+                   select 1 from public.equinos as e
+                   where e.id = at.equino_id and e.tenant_id = at.tenant_id
+                     and ($12::boolean or e.criado_por = $13)
+                 )
+               returning at.id`,
+              [...params, body.id, isManager, user.id],
+            )
+          : await pool.query<{ id: string }>(
+              `insert into public.agenda_treinos (
+                 tenant_id, equino_id, tipo_atividade, treinador_nome, observacoes,
+                 data_inicio, data_fim, dias_semana, hora_inicio, hora_fim, data_hora
+               )
+               values ($1, $2, $3, $4, $5, $6, $7, $8::smallint[], $9::time, $10::time,
+                       ($6::date + $9::time) at time zone 'America/Sao_Paulo')
+               returning id`,
+              params,
+            );
+        if (!result.rowCount) {
+          return errorResponse("Treino não encontrado.", 404);
+        }
+        return Response.json({ id: result.rows[0].id }, { status: isUpdate ? 200 : 201 });
       }
 
       case "updateTenant": {

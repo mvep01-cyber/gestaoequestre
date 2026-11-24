@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Dashboard } from "@/app/dashboard";
 import type { AdminFinanceEntry, AdminFinanceRegistration } from "@/app/admin-finance";
+import type { TrainingRecord, TreatmentRecord } from "@/app/care-schedule";
 import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
 import {
   getAdminFinancePool,
@@ -538,6 +539,9 @@ export default async function DashboardPage({
     cycleCountResult,
     cyclesResult,
     reproductionVeterinariansResult,
+    treatmentsResult,
+    trainingPlansResult,
+    careProvidersResult,
   ] = await Promise.all([
     pool.query<HorseRecord>(
       `select e.id, e.proprietario_id, e.nome, e.baia, e.raca, e.categoria, e.status,
@@ -589,7 +593,13 @@ export default async function DashboardPage({
        from public.agenda_treinos as at
        join public.equinos as e
          on e.id = at.equino_id and e.tenant_id = at.tenant_id
-       where at.tenant_id = $1 and at.data_hora >= $2 and at.data_hora < $3
+       where at.tenant_id = $1
+         and ((at.data_hora >= $2 and at.data_hora < $3)
+           or (at.data_inicio is not null
+             and ($2::timestamptz at time zone 'America/Sao_Paulo')::date
+               between at.data_inicio and at.data_fim
+             and extract(isodow from $2::timestamptz at time zone 'America/Sao_Paulo')::int
+               = any(at.dias_semana::int[])))
          and ($4::boolean or e.criado_por = $5)`,
       [tenantId, dayStart.toISOString(), dayEnd.toISOString(), isManager, user.id],
     ),
@@ -602,7 +612,13 @@ export default async function DashboardPage({
        from public.agenda_treinos as at
        join public.equinos as e
          on e.id = at.equino_id and e.tenant_id = at.tenant_id
-       where at.tenant_id = $1 and at.data_hora >= $2 and at.data_hora < $3
+       where at.tenant_id = $1
+         and ((at.data_hora >= $2 and at.data_hora < $3)
+           or (at.data_inicio is not null
+             and ($2::timestamptz at time zone 'America/Sao_Paulo')::date
+               between at.data_inicio and at.data_fim
+             and extract(isodow from $2::timestamptz at time zone 'America/Sao_Paulo')::int
+               = any(at.dias_semana::int[])))
          and ($4::boolean or e.criado_por = $5)
        order by at.data_hora
        limit 20`,
@@ -704,6 +720,68 @@ export default async function DashboardPage({
           [tenantId],
         )
       : Promise.resolve({ rows: [] as { nome: string }[] }),
+    pool.query<TreatmentRecord>(
+      `select tm.id, tm.equino_id, e.nome as nome_equino, tm.tipo, tm.descricao,
+              tm.dose_via, tm.data_inicio::text as data_inicio,
+              coalesce(tm.data_fim, tm.data_inicio)::text as data_fim,
+              coalesce(tm.dias_semana, array[1, 2, 3, 4, 5, 6, 7]::smallint[])::int[] as dias_semana,
+              coalesce(
+                nullif(
+                  array(select to_char(h, 'HH24:MI') from unnest(tm.horarios) as h order by h),
+                  '{}'::text[]
+                ),
+                array(
+                  select distinct to_char(
+                    (ma.data_hora_prevista at time zone 'America/Sao_Paulo')::time, 'HH24:MI')
+                  from public.medicamentos_aplicacoes as ma
+                  where ma.tratamento_id = tm.id and ma.tenant_id = tm.tenant_id
+                  order by 1
+                )
+              ) as horarios,
+              tm.prestador_nome, tm.observacoes,
+              (select count(*)::int from public.medicamentos_aplicacoes as ma
+                where ma.tratamento_id = tm.id and ma.tenant_id = tm.tenant_id
+                  and ma.status = 'PENDENTE') as pendentes,
+              (select ma.id from public.medicamentos_aplicacoes as ma
+                where ma.tratamento_id = tm.id and ma.tenant_id = tm.tenant_id
+                  and ma.status = 'PENDENTE'
+                order by ma.data_hora_prevista limit 1) as proxima_aplicacao_id
+       from public.tratamentos_medicamentos as tm
+       join public.equinos as e
+         on e.id = tm.equino_id and e.tenant_id = tm.tenant_id
+       where tm.tenant_id = $1 and ($2::boolean or e.criado_por = $3)
+       order by tm.data_inicio desc, tm.created_at desc
+       limit 200`,
+      [tenantId, isManager, user.id],
+    ),
+    pool.query<TrainingRecord>(
+      `select at.id, at.equino_id, e.nome as nome_equino, at.treinador_nome,
+              coalesce(at.data_inicio,
+                (at.data_hora at time zone 'America/Sao_Paulo')::date)::text as data_inicio,
+              coalesce(at.data_fim, at.data_inicio,
+                (at.data_hora at time zone 'America/Sao_Paulo')::date)::text as data_fim,
+              coalesce(at.dias_semana,
+                array[extract(isodow from at.data_hora at time zone 'America/Sao_Paulo')::smallint]
+              )::int[] as dias_semana,
+              to_char(coalesce(at.hora_inicio,
+                (at.data_hora at time zone 'America/Sao_Paulo')::time), 'HH24:MI') as hora_inicio,
+              to_char(at.hora_fim, 'HH24:MI') as hora_fim,
+              at.tipo_atividade, at.observacoes, at.status
+       from public.agenda_treinos as at
+       join public.equinos as e
+         on e.id = at.equino_id and e.tenant_id = at.tenant_id
+       where at.tenant_id = $1 and ($2::boolean or e.criado_por = $3)
+       order by at.data_hora desc
+       limit 200`,
+      [tenantId, isManager, user.id],
+    ),
+    pool.query<{ nome: string }>(
+      `select distinct nome
+       from public.prestadores_servicos
+       where tenant_id = $1 and btrim(nome) <> ''
+       order by nome`,
+      [tenantId],
+    ),
   ]);
 
   const horses = horseResult.rows;
@@ -747,6 +825,9 @@ export default async function DashboardPage({
         valor: Number(row.valor),
       }))}
       reproductionCycles={cyclesResult.rows}
+      treatments={treatmentsResult.rows}
+      trainingPlans={trainingPlansResult.rows}
+      careProviders={careProvidersResult.rows.map((row) => row.nome)}
       reproductionVeterinarians={reproductionVeterinariansResult.rows.map(
         (row) => row.nome,
       )}

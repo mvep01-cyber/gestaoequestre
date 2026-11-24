@@ -10,7 +10,6 @@ import {
   ChevronRight,
   CircleDollarSign,
   ClipboardCheck,
-  Clock3,
   Dna,
   HeartPulse,
   Home,
@@ -34,6 +33,12 @@ import { Products } from "./products";
 import { ServiceProviders, type ProviderCenter } from "./service-providers";
 import { Employees } from "./employees";
 import { Suppliers } from "./suppliers";
+import {
+  HealthModule,
+  ScheduleModule,
+  type TrainingRecord,
+  type TreatmentRecord,
+} from "./care-schedule";
 import { isHttpUrl } from "@/lib/url";
 import { isValidCpf } from "@/lib/brazilian-documents";
 import { productTimeZone } from "@/lib/product-dates";
@@ -207,6 +212,9 @@ type DashboardProps = {
   financeEntries?: FinanceEntry[];
   reproductionCycles?: ReproductionCycle[];
   reproductionVeterinarians?: string[];
+  treatments?: TreatmentRecord[];
+  trainingPlans?: TrainingRecord[];
+  careProviders?: string[];
 };
 
 type ClientFormState = {
@@ -642,6 +650,9 @@ export function Dashboard({
   financeEntries: initialFinanceEntries = [],
   reproductionCycles: initialReproductionCycles = [],
   reproductionVeterinarians = [],
+  treatments = [],
+  trainingPlans = [],
+  careProviders = [],
   clients: initialClients = [],
   cteHarasRegistrations = [],
   selectedTenantId,
@@ -667,7 +678,7 @@ export function Dashboard({
   const [applications, setApplications] = useState(
     demo && medicationApplications.length === 0 ? demoApplications : medicationApplications,
   );
-  const [trainings, setTrainings] = useState(
+  const [, setTrainings] = useState(
     demo && todayTrainings.length === 0 ? demoTrainings : todayTrainings,
   );
   const [tenants, setTenants] = useState(managedTenants);
@@ -1651,85 +1662,32 @@ export function Dashboard({
 
   function renderHealth() {
     return (
-      <section className="panel module-panel">
-        <div className="panel-heading">
-          <div>
-            <span className="eyebrow">Checklist de saúde</span>
-            <h2>{applications.length} cuidados para conferir</h2>
-          </div>
-          <span className="module-badge"><HeartPulse size={20} /></span>
-        </div>
-        {applications.length === 0 ? (
-          <div className="empty-state compact">
-            <BadgeCheckIcon />
-            <span>Todos os cuidados foram conferidos.</span>
-          </div>
-        ) : (
-          <div className="care-list">
-            {applications.map((application) => (
-              <article className="care-row" key={application.id}>
-                <span className="care-time">
-                  <Clock3 size={17} /> {getTime(application.data_hora_prevista)}
-                </span>
-                <div className="care-info">
-                  <strong>{application.descricao}</strong>
-                  <span>{application.nome_equino}</span>
-                </div>
-                <button
-                  className="button button-complete"
-                  onClick={() => void markApplicationDone(application.id)}
-                >
-                  <Check size={19} /> Aplicado
-                </button>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+      <HealthModule
+        demo={demo}
+        canManage={canManageClients}
+        horses={horses}
+        providers={careProviders}
+        treatments={treatments}
+        post={postDashboardAction}
+        onFeedback={setFeedback}
+        onSaved={() => router.refresh()}
+        onApply={markApplicationDone}
+      />
     );
   }
 
   function renderSchedule() {
     return (
-      <section className="panel module-panel">
-        <div className="panel-heading">
-          <div>
-            <span className="eyebrow">Agenda de hoje</span>
-            <h2>{trainings.length} treinos programados</h2>
-          </div>
-          <span className="module-badge"><CalendarDays size={20} /></span>
-        </div>
-        {trainings.length === 0 ? (
-          <div className="empty-state compact">
-            <CalendarDays size={30} />
-            <span>Nenhum treino programado para hoje.</span>
-          </div>
-        ) : (
-          <div className="care-list">
-            {trainings.map((training) => (
-              <article className="care-row" key={training.id}>
-                <span className="care-time">
-                  <Clock3 size={17} /> {getTime(training.data_hora)}
-                </span>
-                <div className="care-info">
-                  <strong>{training.tipo_atividade}</strong>
-                  <span>{training.nome_equino}</span>
-                </div>
-                {training.status === "CONCLUIDO" ? (
-                  <span className="completed-label"><Check size={17} /> Concluído</span>
-                ) : (
-                  <button
-                    className="button button-secondary"
-                    onClick={() => void markTrainingDone(training.id)}
-                  >
-                    Marcar feito
-                  </button>
-                )}
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+      <ScheduleModule
+        demo={demo}
+        canManage={canManageClients}
+        horses={horses}
+        trainings={trainingPlans}
+        post={postDashboardAction}
+        onFeedback={setFeedback}
+        onSaved={() => router.refresh()}
+        onComplete={markTrainingDone}
+      />
     );
   }
 
