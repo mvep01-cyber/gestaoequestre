@@ -1,18 +1,23 @@
 import { authorizedCenterUser, isUuid } from "@/lib/center-access";
+import { isValidCpfOrCnpj } from "@/lib/brazilian-documents";
 import { getPool } from "@/lib/db";
 import { isSameOrigin } from "@/lib/request-security";
 
-const fields = ["nome", "cnpj_cpf", "endereco", "cep", "bairro", "cidade", "estado", "telefone", "nome_vendedor", "telefone_vendedor", "email"] as const;
+const fields = ["nome", "cnpj_cpf", "endereco", "complemento", "cep", "bairro", "cidade", "estado", "telefone", "nome_vendedor", "telefone_vendedor", "email"] as const;
 type SupplierFields = Record<(typeof fields)[number], string>;
 
 function supplierFields(input: Record<string, unknown>): SupplierFields | null {
   const result = {} as SupplierFields;
   for (const field of fields) {
     const value = input[field];
-    if (typeof value !== "string" || value.trim().length > 200) return null;
+    if (typeof value !== "string" ||
+        value.trim().length > (field === "complemento" ? 30 : 200)) return null;
     result[field] = value.trim();
   }
-  if (!result.nome || (result.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email))) return null;
+  if (!result.nome ||
+      (result.cnpj_cpf && !isValidCpfOrCnpj(result.cnpj_cpf)) ||
+      (result.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email))) return null;
+  result.cnpj_cpf = result.cnpj_cpf.toUpperCase();
   return result;
 }
 
@@ -34,7 +39,7 @@ export async function GET() {
     const pool = getPool();
     const [suppliers, centers] = await Promise.all([
       pool.query(
-        `select f.id, f.cadastro_cte_haras_id, f.nome, f.cnpj_cpf, f.endereco, f.cep,
+        `select f.id, f.cadastro_cte_haras_id, f.nome, f.cnpj_cpf, f.endereco, f.complemento, f.cep,
                 f.bairro, f.cidade, f.estado, f.telefone, f.nome_vendedor, f.telefone_vendedor, f.email,
                 count(distinct p.codigo)::int as produtos
          from public.fornecedores f
@@ -68,10 +73,10 @@ export async function POST(request: Request) {
   try {
     const result = await getPool().query(
       `insert into public.fornecedores
-       (tenant_id, cadastro_cte_haras_id, nome, cnpj_cpf, endereco, cep, bairro, cidade, estado, telefone, nome_vendedor, telefone_vendedor, email)
-       select c.tenant_id, c.id, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+       (tenant_id, cadastro_cte_haras_id, nome, cnpj_cpf, endereco, complemento, cep, bairro, cidade, estado, telefone, nome_vendedor, telefone_vendedor, email)
+       select c.tenant_id, c.id, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
        from public.cadastros_cte_haras c
-       where c.id = $1 and ($13::uuid is null or c.tenant_id = $13)
+       where c.id = $1 and ($14::uuid is null or c.tenant_id = $14)
        returning id`,
       [centerId, ...fields.map((field) => values[field]), user.perfil === "ADMIN" ? null : user.tenant_id],
     );
@@ -93,10 +98,10 @@ export async function PATCH(request: Request) {
   try {
     const result = await getPool().query(
       `update public.fornecedores
-       set nome=$2, cnpj_cpf=$3, endereco=$4, cep=$5, bairro=$6, cidade=$7,
-           estado=$8, telefone=$9, nome_vendedor=$10, telefone_vendedor=$11, email=$12
-       where id=$1 and ($13::uuid is null or cadastro_cte_haras_id=$13)
-         and ($14::uuid is null or tenant_id=$14)
+       set nome=$2, cnpj_cpf=$3, endereco=$4, complemento=$5, cep=$6, bairro=$7, cidade=$8,
+           estado=$9, telefone=$10, nome_vendedor=$11, telefone_vendedor=$12, email=$13
+       where id=$1 and ($14::uuid is null or cadastro_cte_haras_id=$14)
+         and ($15::uuid is null or tenant_id=$15)
        returning id`,
       [input.id, ...fields.map((field) => values[field]), user.perfil === "ADMIN" ? null : user.cadastro_cte_haras_id,
         user.perfil === "ADMIN" ? null : user.tenant_id],

@@ -36,10 +36,16 @@ test("prestadores, funcionários e fornecedores são compartilhados e protegidos
       "insert into prestadores_servicos (tenant_id, cadastro_cte_haras_id, nome) values ($1,$2,'Cadastro anterior') returning id",
       [tenant, a],
     )).rows[0].id;
+    const legacySupplier = (await db.query(
+      "insert into fornecedores (tenant_id, cadastro_cte_haras_id, nome) values ($1,$2,'Fornecedor anterior') returning id",
+      [tenant, a],
+    )).rows[0].id;
     await db.query("alter table prestadores_servicos drop column complemento");
+    await db.query("alter table fornecedores drop column complemento");
     await db.query(schema);
     assert.deepEqual((await db.query("select nome, complemento from prestadores_servicos where id=$1", [legacy])).rows[0],
       { nome: "Cadastro anterior", complemento: "" });
+    assert.equal((await db.query("select complemento from fornecedores where id=$1", [legacySupplier])).rows[0].complemento, "");
     await db.query("delete from prestadores_servicos where id=$1", [legacy]);
     const password = randomBytes(24).toString("hex"), hash = await bcrypt.hash(password, 10);
     async function user(email, role, centerId = null) {
@@ -108,6 +114,7 @@ test("prestadores, funcionários e fornecedores são compartilhados e protegidos
     assert.equal((await write(clientA, "POST", { ...input, estado: "XX" })).status, 400);
     assert.equal((await write(clientA, "POST", { ...input, email: "incorreto" })).status, 400);
     assert.equal((await write(clientA, "POST", { ...input, complemento: "x".repeat(31) })).status, 400);
+    assert.equal((await write(clientA, "POST", { ...input, cpf: "111.111.111-11" })).status, 400);
     const createdA = await write(clientA, "POST", { ...input, cadastro_cte_haras_id: b });
     assert.equal(createdA.status, 201);
     const id = (await createdA.json()).id;
@@ -117,10 +124,21 @@ test("prestadores, funcionários e fornecedores são compartilhados e protegidos
     assert.equal((await (await clientB("/api/service-providers")).json()).providers.length, 0);
     assert.equal((await write(clientB, "PATCH", { ...input, id, nome: "Alteração indevida" })).status, 404);
     const complemento = "x".repeat(30);
-    assert.equal((await write(clientA2, "PATCH", { ...input, id, nome: "Prestador alterado", complemento })).status, 200);
+    assert.equal((await write(clientA2, "PATCH", {
+      ...input, cpf: "529.982.247-25", id, nome: "Prestador alterado", complemento,
+    })).status, 200);
     let updated = (await (await clientA("/api/service-providers")).json()).providers[0];
     assert.equal(updated.nome, "Prestador alterado");
+    assert.equal(updated.cpf, "529.982.247-25");
     assert.equal(updated.complemento, complemento);
+    assert.equal((await write(clientA2, "PATCH", {
+      ...input, cpf: "12.abc.345/01de-35", id,
+    })).status, 200);
+    updated = (await (await clientA("/api/service-providers")).json()).providers[0];
+    assert.equal(updated.cpf, "12.ABC.345/01DE-35");
+    assert.equal((await write(clientA2, "PATCH", {
+      ...input, cpf: "12.ABC.345/01DE-36", id,
+    })).status, 400);
     assert.equal((await write(clientA2, "PATCH", { ...input, id, complemento: "x".repeat(31) })).status, 400);
     assert.equal((await write(clientA2, "PATCH", { ...input, id })).status, 200);
     assert.equal((await (await clientA("/api/service-providers")).json()).providers[0].complemento, complemento);
@@ -144,6 +162,7 @@ test("prestadores, funcionários e fornecedores são compartilhados e protegidos
     assert.equal((await fetch(`${base}/api/employees`)).status, 403);
     assert.equal((await operational("/api/employees")).status, 403);
     assert.equal((await writeEmployee(clientA, "POST", employee, "")).status, 403);
+    assert.equal((await writeEmployee(clientA, "POST", { ...employee, cpf: "111.111.111-11" })).status, 400);
     for (const invalid of [
       { nome: " " }, { estado: "XX" }, { email: "inválido" }, { tipo_contratacao: "Autônomo" },
       { valor: "-1" }, { valor: "1.001" }, { valor: "10000000000" }, { valor: "NaN" },
@@ -159,9 +178,12 @@ test("prestadores, funcionários e fornecedores são compartilhados e protegidos
     assert.equal(employeeA.valor, "150.25");
     assert.equal((await (await clientB("/api/employees")).json()).employees.length, 0);
     assert.equal((await writeEmployee(clientB, "PATCH", { ...employee, id: employeeId })).status, 404);
-    assert.equal((await writeEmployee(clientA2, "PATCH", { ...employee, id: employeeId, tipo_contratacao: "Mensalista", valor: "0" })).status, 200);
+    assert.equal((await writeEmployee(clientA2, "PATCH", {
+      ...employee, cpf: "529.982.247-25", id: employeeId, tipo_contratacao: "Mensalista", valor: "0",
+    })).status, 200);
     const changed = (await (await clientA("/api/employees")).json()).employees[0];
     assert.equal(changed.tipo_contratacao, "Mensalista");
+    assert.equal(changed.cpf, "529.982.247-25");
     assert.equal(changed.valor, "0.00");
     assert.equal((await writeEmployee(admin, "POST", { ...employee, cadastro_cte_haras_id: b, nome: "Funcionário B", tipo_contratacao: "", valor: "" })).status, 201);
     const employeeB = (await (await clientB("/api/employees")).json()).employees[0];
@@ -173,7 +195,7 @@ test("prestadores, funcionários e fornecedores são compartilhados e protegidos
     assert.doesNotMatch(await (await operational("/dashboard")).text(), /Funcionários/);
 
     const supplier = {
-      nome: "Fornecedor A", cnpj_cpf: "", endereco: "", cep: "", bairro: "", cidade: "",
+      nome: "Fornecedor A", cnpj_cpf: "", endereco: "", complemento: "", cep: "", bairro: "", cidade: "",
       estado: "São Paulo", telefone: "", nome_vendedor: "", telefone_vendedor: "", email: "",
     };
     const writeSupplier = (request, method, data, origin = base) => request("/api/suppliers", {
@@ -184,19 +206,31 @@ test("prestadores, funcionários e fornecedores são compartilhados e protegidos
     assert.equal((await writeSupplier(clientA, "POST", supplier, "")).status, 403);
     assert.equal((await writeSupplier(clientA, "POST", { ...supplier, nome: "" })).status, 400);
     assert.equal((await writeSupplier(clientA, "POST", { ...supplier, email: "inválido" })).status, 400);
-    const createdSupplier = await writeSupplier(clientA, "POST", { ...supplier, cadastro_cte_haras_id: b });
+    assert.equal((await writeSupplier(clientA, "POST", { ...supplier, cnpj_cpf: "11.222.333/0001-80" })).status, 400);
+    assert.equal((await writeSupplier(clientA, "POST", { ...supplier, cnpj_cpf: "12.ABC.345/01DE-36" })).status, 400);
+    assert.equal((await writeSupplier(clientA, "POST", { ...supplier, complemento: "x".repeat(31) })).status, 400);
+    const createdSupplier = await writeSupplier(clientA, "POST", {
+      ...supplier, cnpj_cpf: "12.abc.345/01de-35", complemento: "Galpão 2", cadastro_cte_haras_id: b,
+    });
     assert.equal(createdSupplier.status, 201);
     const supplierId = (await createdSupplier.json()).id;
     const supplierA = (await (await clientA2("/api/suppliers")).json()).suppliers[0];
     assert.equal(supplierA.cadastro_cte_haras_id, a);
     assert.equal(supplierA.produtos, 0);
+    assert.equal(supplierA.cnpj_cpf, "12.ABC.345/01DE-35");
+    assert.equal(supplierA.complemento, "Galpão 2");
     assert.equal((await (await clientB("/api/suppliers")).json()).suppliers.length, 0);
     assert.equal((await writeSupplier(clientB, "PATCH", { ...supplier, id: supplierId })).status, 404);
-    assert.equal((await writeSupplier(clientA2, "PATCH", { ...supplier, id: supplierId, nome: "Fornecedor alterado" })).status, 200);
-    assert.equal((await (await clientA("/api/suppliers")).json()).suppliers[0].nome, "Fornecedor alterado");
+    assert.equal((await writeSupplier(clientA2, "PATCH", {
+      ...supplier, cnpj_cpf: "11.222.333/0001-81", complemento: "x".repeat(30),
+      id: supplierId, nome: "Fornecedor alterado",
+    })).status, 200);
+    const updatedSupplier = (await (await clientA("/api/suppliers")).json()).suppliers[0];
+    assert.equal(updatedSupplier.nome, "Fornecedor alterado");
+    assert.equal(updatedSupplier.complemento, "x".repeat(30));
     assert.equal((await writeSupplier(admin, "POST", { ...supplier, cadastro_cte_haras_id: b, nome: "Fornecedor B" })).status, 201);
     assert.equal((await (await clientB("/api/suppliers")).json()).suppliers[0].nome, "Fornecedor B");
-    assert.equal((await (await admin("/api/suppliers")).json()).suppliers.length, 2);
+    assert.equal((await (await admin("/api/suppliers")).json()).suppliers.length, 3);
     assert.equal((await writeSupplier(operational, "PATCH", { ...supplier, id: supplierId })).status, 403);
   } finally {
     if (server && server.exitCode === null) {

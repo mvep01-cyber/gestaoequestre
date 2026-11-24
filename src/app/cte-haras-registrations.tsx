@@ -3,6 +3,7 @@
 import { Plus, Search, UsersRound, X } from "lucide-react";
 import { Fragment, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { isValidCpf } from "@/lib/brazilian-documents";
 
 export type CteHarasRegistration = {
   id: string;
@@ -114,6 +115,10 @@ export function CteHarasRegistrations({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form) return;
+    if (!isValidCpf(form.cpf)) {
+      setFeedback("Informe um CPF válido.");
+      return;
+    }
     if (demo) {
       if (form.tipo_cadastro !== "CTE" && form.tipo_cadastro !== "HARAS") return;
       const registration: CteHarasRegistration = {
@@ -266,7 +271,10 @@ export function CteHarasRegistrations({
               {fields.map((field) => (
                 <Fragment key={field.key}>
                   <label htmlFor={`registration-${field.key}`}>{field.label}</label>
-                  <input id={`registration-${field.key}`} type={field.type ?? "text"} step={field.type === "number" ? "any" : undefined} required value={form[field.key]} onChange={(event) => setForm({ ...form, [field.key]: event.target.value })} placeholder={field.placeholder} />
+                  <input id={`registration-${field.key}`} type={field.type ?? "text"}
+                    inputMode={field.key === "cpf" ? "numeric" : undefined}
+                    maxLength={field.key === "cpf" ? 14 : undefined}
+                    step={field.type === "number" ? "any" : undefined} required value={form[field.key]} onChange={(event) => setForm({ ...form, [field.key]: event.target.value })} placeholder={field.placeholder} />
                 </Fragment>
               ))}
               {feedback && <p className="client-form-error" role="alert">{feedback}</p>}

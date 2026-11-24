@@ -1,4 +1,5 @@
 import { authorizedCenterUser, brazilianStates, isUuid } from "@/lib/center-access";
+import { isValidCpfOrCnpj } from "@/lib/brazilian-documents";
 import { getPool } from "@/lib/db";
 import { isSameOrigin } from "@/lib/request-security";
 
@@ -17,7 +18,9 @@ function providerFields(input: Record<string, unknown>): ProviderFields | null {
     result[field] = value.trim();
   }
   if (!result.nome || (result.estado && !brazilianStates.has(result.estado)) ||
+      (result.cpf && !isValidCpfOrCnpj(result.cpf)) ||
       (result.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email))) return null;
+  result.cpf = result.cpf.toUpperCase();
   return result;
 }
 

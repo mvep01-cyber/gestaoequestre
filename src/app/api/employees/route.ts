@@ -1,4 +1,5 @@
 import { authorizedCenterUser, brazilianStates, isUuid } from "@/lib/center-access";
+import { isValidCpf } from "@/lib/brazilian-documents";
 import { getPool } from "@/lib/db";
 import { isSameOrigin } from "@/lib/request-security";
 
@@ -13,6 +14,7 @@ function employeeFields(input: Record<string, unknown>): EmployeeFields | null {
     result[field] = value.trim();
   }
   if (!result.nome || (result.estado && !brazilianStates.has(result.estado)) ||
+      (result.cpf && !isValidCpf(result.cpf)) ||
       (result.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email)) ||
       !["", "Diarista", "Mensalista"].includes(result.tipo_contratacao)) return null;
   if (typeof input.valor !== "string") return null;

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { isValidCpfOrCnpj } from "@/lib/brazilian-documents";
 import type { ProviderCenter } from "./service-providers";
 
 type SupplierFields = {
-  nome: string; cnpj_cpf: string; endereco: string; cep: string; bairro: string; cidade: string;
+  nome: string; cnpj_cpf: string; endereco: string; complemento: string; cep: string; bairro: string; cidade: string;
   estado: string; telefone: string; nome_vendedor: string; telefone_vendedor: string; email: string;
 };
 type Supplier = SupplierFields & { id: string; cadastro_cte_haras_id: string; produtos: number };
@@ -14,6 +15,7 @@ const fields: { key: FieldName; label: string; column: string; type?: string }[]
   { key: "nome", label: "Nome do fornecedor", column: "Fornecedor" },
   { key: "cnpj_cpf", label: "CNPJ/CPF do fornecedor", column: "CNPJ/CPF" },
   { key: "endereco", label: "Endereço do fornecedor", column: "Endereço" },
+  { key: "complemento", label: "Complemento do endereço", column: "Complemento" },
   { key: "cep", label: "CEP do fornecedor", column: "CEP" },
   { key: "bairro", label: "Bairro do fornecedor", column: "Bairro" },
   { key: "cidade", label: "Cidade do fornecedor", column: "Cidade" },
@@ -24,7 +26,7 @@ const fields: { key: FieldName; label: string; column: string; type?: string }[]
   { key: "email", label: "E-mail", column: "E-mail", type: "email" },
 ];
 const empty: SupplierFields = {
-  nome: "", cnpj_cpf: "", endereco: "", cep: "", bairro: "", cidade: "",
+  nome: "", cnpj_cpf: "", endereco: "", complemento: "", cep: "", bairro: "", cidade: "",
   estado: "", telefone: "", nome_vendedor: "", telefone_vendedor: "", email: "",
 };
 
@@ -70,6 +72,10 @@ export function Suppliers({ demo, centerId, onCentersChange, onCenterChange, onV
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form) return;
+    if (form.cnpj_cpf.trim() && !isValidCpfOrCnpj(form.cnpj_cpf)) {
+      setFeedback("Informe um CPF ou CNPJ válido.");
+      return;
+    }
     setSaving(true);
     setFeedback("");
     try {
@@ -112,7 +118,8 @@ export function Suppliers({ demo, centerId, onCentersChange, onCenterChange, onV
     setFeedback("");
     setEditingId(supplier?.id ?? null);
     setForm(supplier ? {
-      nome: supplier.nome, cnpj_cpf: supplier.cnpj_cpf, endereco: supplier.endereco, cep: supplier.cep,
+      nome: supplier.nome, cnpj_cpf: supplier.cnpj_cpf.toUpperCase(), endereco: supplier.endereco,
+      complemento: supplier.complemento, cep: supplier.cep,
       bairro: supplier.bairro, cidade: supplier.cidade, estado: supplier.estado, telefone: supplier.telefone,
       nome_vendedor: supplier.nome_vendedor, telefone_vendedor: supplier.telefone_vendedor, email: supplier.email,
     } : { ...empty });
@@ -162,8 +169,13 @@ export function Suppliers({ demo, centerId, onCentersChange, onCenterChange, onV
               </label>
               {fields.map(({ key, label, type }) => <label className="provider-field" htmlFor={`supplier-${key}`} key={key}>
                 {label}
-                <input id={`supplier-${key}`} type={type ?? "text"} required={key === "nome"} maxLength={200}
-                  value={form[key]} onChange={(event) => setForm({ ...form, [key]: event.target.value })} />
+                <input id={`supplier-${key}`} type={type ?? "text"} required={key === "nome"}
+                  maxLength={key === "cnpj_cpf" ? 18 : key === "complemento" ? 30 : 200}
+                  autoCapitalize={key === "cnpj_cpf" ? "characters" : undefined}
+                  placeholder={key === "cnpj_cpf" ? "CPF ou CNPJ (numérico ou alfanumérico)" : undefined}
+                  value={form[key]} onChange={(event) => setForm({
+                    ...form, [key]: key === "cnpj_cpf" ? event.target.value.toUpperCase() : event.target.value,
+                  })} />
               </label>)}
             </div>
             <p className="provider-form-note">O nome do fornecedor é obrigatório. Para trocar o centro, feche o formulário e selecione-o no topo.</p>

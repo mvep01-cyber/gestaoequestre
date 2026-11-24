@@ -36,6 +36,7 @@ import { ServiceProviders, type ProviderCenter } from "./service-providers";
 import { Employees } from "./employees";
 import { Suppliers } from "./suppliers";
 import { isHttpUrl } from "@/lib/url";
+import { isValidCpf } from "@/lib/brazilian-documents";
 import { productTimeZone } from "@/lib/product-dates";
 
 type HorseRecord = {
@@ -1060,6 +1061,10 @@ export function Dashboard({
   async function handleCreateClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback("");
+    if (!isValidCpf(clientForm.cpf)) {
+      setFeedback("Informe um CPF válido.");
+      return;
+    }
     setIsSaving(true);
 
     let demoClientNumber = 1;
@@ -1110,6 +1115,10 @@ export function Dashboard({
   async function handleUpdateClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback("");
+    if (!isValidCpf(clientForm.cpf)) {
+      setFeedback("Informe um CPF válido.");
+      return;
+    }
     setIsSaving(true);
 
     const updatedClient: ClientRecord = {
@@ -2327,6 +2336,8 @@ export function Dashboard({
               <input
                 id="client-cpf"
                 required
+                maxLength={14}
+                inputMode="numeric"
                 value={clientForm.cpf}
                 onChange={(event) => setClientForm({ ...clientForm, cpf: event.target.value })}
                 placeholder="Ex.: 123.456.789-09"

@@ -155,6 +155,7 @@ create table if not exists public.fornecedores (
   nome text not null,
   cnpj_cpf text not null default '',
   endereco text not null default '',
+  complemento varchar(30) not null default '',
   cep text not null default '',
   bairro text not null default '',
   cidade text not null default '',
@@ -167,6 +168,9 @@ create table if not exists public.fornecedores (
   foreign key (cadastro_cte_haras_id, tenant_id)
     references public.cadastros_cte_haras (id, tenant_id) on delete cascade
 );
+
+alter table public.fornecedores
+  add column if not exists complemento varchar(30) not null default '';
 
 create index if not exists fornecedores_cadastro_nome_idx
   on public.fornecedores (cadastro_cte_haras_id, nome);

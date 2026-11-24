@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { isValidCpfOrCnpj } from "@/lib/brazilian-documents";
 
 type ProviderFields = {
   nome: string; cpf: string; rg: string; endereco: string; complemento: string; cep: string; bairro: string;
@@ -12,7 +13,7 @@ type ProviderData = { providers: Provider[]; centers: ProviderCenter[] };
 type FieldName = keyof ProviderFields;
 const fields: { key: FieldName; label: string; column: string; type?: string }[] = [
   { key: "nome", label: "Nome do prestador", column: "Prestador" },
-  { key: "cpf", label: "CPF do prestador", column: "CPF" },
+  { key: "cpf", label: "CPF/CNPJ do prestador", column: "CPF/CNPJ" },
   { key: "rg", label: "RG do prestador", column: "RG" },
   { key: "endereco", label: "Endereço do prestador", column: "Endereço" },
   { key: "complemento", label: "Complemento", column: "Complemento" },
@@ -72,6 +73,10 @@ export function ServiceProviders({ demo, centerId, onCentersChange, onCenterChan
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form) return;
+    if (form.cpf.trim() && !isValidCpfOrCnpj(form.cpf)) {
+      setFeedback("Informe um CPF ou CNPJ válido.");
+      return;
+    }
     setSaving(true);
     setFeedback("");
     try {
@@ -114,7 +119,7 @@ export function ServiceProviders({ demo, centerId, onCentersChange, onCenterChan
     setFeedback("");
     setEditingId(provider?.id ?? null);
     setViewing(readOnly);
-    setForm(provider ? { nome: provider.nome, cpf: provider.cpf, rg: provider.rg, endereco: provider.endereco, complemento: provider.complemento, cep: provider.cep,
+    setForm(provider ? { nome: provider.nome, cpf: provider.cpf.toUpperCase(), rg: provider.rg, endereco: provider.endereco, complemento: provider.complemento, cep: provider.cep,
       bairro: provider.bairro, cidade: provider.cidade, estado: provider.estado, telefone: provider.telefone,
       email: provider.email, servicos: provider.servicos } : { ...empty });
   };
@@ -160,7 +165,11 @@ export function ServiceProviders({ demo, centerId, onCentersChange, onCenterChan
               {label}
               {key === "estado" ? <select id={`provider-${key}`} value={form[key]} onChange={(event) => setForm({ ...form, [key]: event.target.value })}>
                 <option value="">Selecione</option>{states.map((state) => <option key={state}>{state}</option>)}
-              </select> : <input id={`provider-${key}`} type={type ?? "text"} required={key === "nome"} maxLength={key === "complemento" ? 30 : key === "servicos" ? 1000 : 200} value={form[key]} onChange={(event) => setForm({ ...form, [key]: event.target.value })} />}
+              </select> : <input id={`provider-${key}`} type={type ?? "text"} required={key === "nome"}
+                maxLength={key === "cpf" ? 18 : key === "complemento" ? 30 : key === "servicos" ? 1000 : 200}
+                autoCapitalize={key === "cpf" ? "characters" : undefined}
+                placeholder={key === "cpf" ? "CPF ou CNPJ" : undefined}
+                value={form[key]} onChange={(event) => setForm({ ...form, [key]: key === "cpf" ? event.target.value.toUpperCase() : event.target.value })} />}
             </label>)}
             </div>
             <p className="provider-form-note">O nome do prestador é obrigatório. Para trocar o centro, feche o formulário e selecione-o no topo.</p>

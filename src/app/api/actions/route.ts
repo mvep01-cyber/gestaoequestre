@@ -1,4 +1,5 @@
 import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
+import { isValidCpf } from "@/lib/brazilian-documents";
 import { getPool } from "@/lib/db";
 import { isSameOrigin } from "@/lib/request-security";
 import { isHttpUrl } from "@/lib/url";
@@ -431,8 +432,8 @@ function validateClientFields(body: Record<string, unknown>): ClientFieldsValida
   ) {
     return { valid: false, message: "Confira o tamanho e o formato dos dados informados." };
   }
-  if (cpf.value.replace(/\D/g, "").length !== 11) {
-    return { valid: false, message: "CPF deve conter 11 dígitos." };
+  if (!isValidCpf(cpf.value)) {
+    return { valid: false, message: "CPF inválido." };
   }
 
   const dataNascimento = parseOptionalDate(body.data_nascimento);
@@ -1265,9 +1266,8 @@ export async function POST(request: Request) {
           return errorResponse("Preencha nome, endereço, profissão, CPF e RG.", 400);
         }
 
-        const cpfDigits = cpf.replace(/\D/g, "");
-        if (cpfDigits.length !== 11) {
-          return errorResponse("CPF deve conter 11 dígitos.", 400);
+        if (!isValidCpf(cpf)) {
+          return errorResponse("CPF inválido.", 400);
         }
 
         if (!isDateOnly(body.data_nascimento)) {

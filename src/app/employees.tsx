@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { isValidCpf } from "@/lib/brazilian-documents";
 import type { ProviderCenter } from "./service-providers";
 
 type EmployeeFields = {
@@ -79,6 +80,10 @@ export function Employees({ demo, centerId, onCentersChange, onCenterChange }: {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form) return;
+    if (form.cpf.trim() && !isValidCpf(form.cpf)) {
+      setFeedback("Informe um CPF válido.");
+      return;
+    }
     setSaving(true);
     setFeedback("");
     try {
@@ -172,7 +177,8 @@ export function Employees({ demo, centerId, onCentersChange, onCenterChange }: {
                 {key === "estado" || key === "tipo_contratacao" ? <select id={`employee-${key}`} value={form[key]} onChange={(event) => setForm({ ...form, [key]: event.target.value })}>
                   <option value="">Selecione</option>{(key === "estado" ? states : ["Diarista", "Mensalista"]).map((option) => <option key={option}>{option}</option>)}
                 </select> : <input id={`employee-${key}`} type={type ?? "text"} required={key === "nome"}
-                  maxLength={type === "number" ? undefined : 200}
+                  maxLength={type === "number" ? undefined : key === "cpf" ? 14 : 200}
+                  inputMode={key === "cpf" ? "numeric" : undefined}
                   min={type === "number" ? "0" : undefined} max={type === "number" ? "9999999999.99" : undefined}
                   step={type === "number" ? "0.01" : undefined} value={form[key]} onChange={(event) => setForm({ ...form, [key]: event.target.value })} />}
               </label>)}
