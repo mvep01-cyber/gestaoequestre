@@ -179,7 +179,6 @@ create table if not exists public.produtos (
   criado_por uuid references public.usuarios (id) on delete set null,
   nome text not null,
   codigo text not null,
-  subitem text not null default '01',
   marca text not null default '',
   fabricante text not null default '',
   descricao text not null default '',
@@ -193,38 +192,52 @@ create table if not exists public.produtos (
     references public.fornecedores (id, cadastro_cte_haras_id, tenant_id),
   check (data_inicio <= data_fim),
   constraint produtos_codigo_formato_check check (codigo ~ '^[A-Za-z0-9]{1,5}$'),
-  constraint produtos_subitem_formato_check check (subitem ~ '^[0-9]{2}$'),
-  constraint produtos_cadastro_codigo_subitem_inicio_key unique (cadastro_cte_haras_id, codigo, subitem, data_inicio)
+  constraint produtos_cadastro_codigo_inicio_key unique (cadastro_cte_haras_id, codigo, data_inicio)
 );
 
-alter table public.produtos add column if not exists fornecedor_id uuid;
-alter table public.produtos alter column fornecedor_id set not null;
+lock table public.produtos in access exclusive mode;
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_fornecedor_centro_fk') then
-    alter table public.produtos add constraint produtos_fornecedor_centro_fk
-      foreign key (fornecedor_id, cadastro_cte_haras_id, tenant_id)
-      references public.fornecedores (id, cadastro_cte_haras_id, tenant_id);
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'produtos' and column_name = 'subitem') then
+    if exists (select 1 from public.produtos group by cadastro_cte_haras_id, codigo having count(distinct subitem) > 1) then
+      raise exception 'Existem códigos com múltiplos subitens. Revise os produtos antes de remover o subitem.';
+    end if;
+  end if;
+  if to_regclass('public.equinos_produtos') is not null then
+    execute 'lock table public.equinos_produtos in access exclusive mode';
+    if exists (select 1 from public.equinos_produtos) then
+      raise exception 'Existem vínculos de produtos com cavalos. Preserve e remova esses vínculos conscientemente antes da migração.';
+    end if;
   end if;
 end $$;
 
-alter table public.produtos add column if not exists subitem text;
-update public.produtos set subitem = '01' where subitem is null;
 alter table public.produtos
-  alter column subitem set default '01',
-  alter column subitem set not null,
-  drop constraint if exists produtos_cadastro_cte_haras_id_codigo_data_inicio_key;
+  drop constraint if exists produtos_subitem_formato_check,
+  drop constraint if exists produtos_cadastro_codigo_subitem_inicio_key,
+  drop constraint if exists produtos_cadastro_cte_haras_id_codigo_data_inicio_key,
+  drop column if exists subitem;
+
+alter table public.produtos add column if not exists fornecedor_id uuid;
+do $$
+begin
+  if exists (select 1 from public.produtos where fornecedor_id is null) then
+    raise exception 'Existem produtos sem fornecedor. Vincule cada produto a um fornecedor do mesmo CTE/Haras antes da migração.';
+  end if;
+end $$;
+alter table public.produtos alter column fornecedor_id set not null;
 
 do $$
 begin
   if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_codigo_formato_check') then
     alter table public.produtos add constraint produtos_codigo_formato_check check (codigo ~ '^[A-Za-z0-9]{1,5}$');
   end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_subitem_formato_check') then
-    alter table public.produtos add constraint produtos_subitem_formato_check check (subitem ~ '^[0-9]{2}$');
+  if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_cadastro_codigo_inicio_key') then
+    alter table public.produtos add constraint produtos_cadastro_codigo_inicio_key unique (cadastro_cte_haras_id, codigo, data_inicio);
   end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_cadastro_codigo_subitem_inicio_key') then
-    alter table public.produtos add constraint produtos_cadastro_codigo_subitem_inicio_key unique (cadastro_cte_haras_id, codigo, subitem, data_inicio);
+  if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_fornecedor_centro_fk') then
+    alter table public.produtos add constraint produtos_fornecedor_centro_fk
+      foreign key (fornecedor_id, cadastro_cte_haras_id, tenant_id)
+      references public.fornecedores (id, cadastro_cte_haras_id, tenant_id);
   end if;
 end $$;
 
@@ -361,33 +374,7 @@ create table if not exists public.equinos (
     references public.equinos (id, tenant_id)
 );
 
-create table if not exists public.equinos_produtos (
-  equino_id uuid not null,
-  tenant_id uuid not null,
-  categoria text not null check (categoria in ('feno', 'racao', 'baia', 'outros')),
-  produto_id uuid references public.produtos (id) on delete set null,
-  produto_codigo text,
-  produto_subitem text,
-  produto_cadastro_id uuid,
-  primary key (equino_id, categoria),
-  foreign key (equino_id, tenant_id) references public.equinos (id, tenant_id) on delete cascade
-);
-
-alter table public.equinos_produtos
-  add column if not exists produto_codigo text,
-  add column if not exists produto_cadastro_id uuid;
-
-update public.equinos_produtos ep
-set produto_codigo = p.codigo, produto_cadastro_id = p.cadastro_cte_haras_id
-from public.produtos p
-where p.id = ep.produto_id
-  and (ep.produto_codigo is null or ep.produto_cadastro_id is null);
-
-alter table public.equinos_produtos add column if not exists produto_subitem text;
-update public.equinos_produtos ep
-set produto_subitem = p.subitem
-from public.produtos p
-where p.id = ep.produto_id and ep.produto_subitem is null;
+drop table if exists public.equinos_produtos;
 
 alter table public.equinos
   add column if not exists criado_por uuid references public.usuarios (id) on delete set null,

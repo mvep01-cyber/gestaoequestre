@@ -2,8 +2,6 @@ import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
 import { getPool } from "@/lib/db";
 import { isSameOrigin } from "@/lib/request-security";
 import { isHttpUrl } from "@/lib/url";
-import { horseProductSlot, horseProductSlots } from "@/lib/horse-products";
-import { productTodaySql } from "@/lib/product-dates";
 import { hash } from "bcryptjs";
 
 type ReproductionCycle = {
@@ -543,22 +541,15 @@ export async function POST(request: Request) {
         if (!canManageHorses) {
           return errorResponse("Este perfil não tem permissão para alterar o cadastro de cavalos.", 403);
         }
+        if ("produtos" in body || "produto_cadastro_id" in body) {
+          return errorResponse("Atualize a página: cavalos não usam mais vínculos de produtos.", 400);
+        }
         const fields = parseHorseInput(body);
         if (!fields) {
           return errorResponse(
             "Confira os dados do cavalo e os valores informados.",
             400,
           );
-        }
-        if (!isUuid(body.produto_cadastro_id) || !isRecord(body.produtos) ||
-            (isClientAccount && body.produto_cadastro_id !== user.cadastro_cte_haras_id)) {
-          return errorResponse("Selecione um CTE/Haras e os quatro produtos obrigatórios.", 400);
-        }
-        const productInput = body.produtos;
-        const selectedProducts = horseProductSlots.map((slot) => ({ slot, id: productInput[slot] }));
-        if (selectedProducts.some((item) => !isUuid(item.id)) ||
-            new Set(selectedProducts.map((item) => item.id)).size !== horseProductSlots.length) {
-          return errorResponse("Selecione os quatro produtos obrigatórios.", 400);
         }
         const owner = await resolveHorseOwner(
           pool,
@@ -575,42 +566,6 @@ export async function POST(request: Request) {
         let horseId: string;
         try {
           await client.query("begin");
-          const codes = await client.query<{ codigo: string }>(
-            `select distinct codigo from public.produtos
-             where id = any($1::uuid[]) and tenant_id = $2 and cadastro_cte_haras_id = $3
-             order by codigo`,
-            [selectedProducts.map((item) => item.id), tenantId, body.produto_cadastro_id],
-          );
-          for (const product of codes.rows) {
-            await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`${body.produto_cadastro_id}:${product.codigo}`]);
-          }
-          const products = await client.query<{ id: string; nome: string; codigo: string; duplicado: boolean }>(
-            `select p.id, p.nome, p.codigo,
-                    (select count(*) > 1 from public.produtos other
-                     where other.tenant_id = p.tenant_id
-                       and other.cadastro_cte_haras_id = p.cadastro_cte_haras_id
-                       and other.codigo = p.codigo
-                       and other.subitem = p.subitem
-                       and ${productTodaySql} between other.data_inicio and other.data_fim) as duplicado
-             from public.produtos p
-             join public.cadastros_cte_haras c on c.id = p.cadastro_cte_haras_id and c.tenant_id = p.tenant_id
-             where p.id = any($1::uuid[]) and p.tenant_id = $2 and p.cadastro_cte_haras_id = $3
-               and ${productTodaySql} between p.data_inicio and p.data_fim
-             for share of p`,
-            [selectedProducts.map((item) => item.id), tenantId, body.produto_cadastro_id],
-          );
-          if (products.rows.some((product) => product.duplicado)) {
-            await client.query("rollback");
-            return errorResponse("Ajuste o cadastro de produtos.", 409);
-          }
-          if (products.rowCount !== horseProductSlots.length ||
-              selectedProducts.some((item) => {
-                const product = products.rows.find((row) => row.id === item.id);
-                return !product || horseProductSlot(product.nome) !== item.slot;
-              })) {
-            await client.query("rollback");
-            return errorResponse("Os produtos devem pertencer ao CTE/Haras selecionado, estar vigentes e corresponder aos campos.", 400);
-          }
           const result = await client.query<{ id: string }>(
             `insert into public.equinos (
                tenant_id, criado_por, nome_proprietario, proprietario_id,
@@ -648,14 +603,6 @@ export async function POST(request: Request) {
             ],
           );
           horseId = result.rows[0].id;
-          await client.query(
-            `insert into public.equinos_produtos
-               (equino_id, tenant_id, categoria, produto_id, produto_codigo, produto_subitem, produto_cadastro_id)
-             select $1, $2, selection.categoria, p.id, p.codigo, p.subitem, p.cadastro_cte_haras_id
-             from unnest($3::text[], $4::uuid[]) as selection(categoria, produto_id)
-             join public.produtos p on p.id = selection.produto_id`,
-            [horseId, tenantId, selectedProducts.map((item) => item.slot), selectedProducts.map((item) => item.id)],
-          );
           await client.query("commit");
         } catch (error) {
           await client.query("rollback");

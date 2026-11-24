@@ -114,10 +114,11 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
 - O cadastro de funcionários usa a mesma regra de acesso por CTE/Haras dos
   prestadores. O valor informado representa a diária ou o mês, conforme o
   tipo de contratação, e não gera lançamentos financeiros automaticamente.
-- Fornecedores seguem a mesma regra de acesso; cada produto precisa pertencer a
-  um fornecedor do mesmo CTE/Haras. A opção "Ver produtos" filtra a lista pelo
-  fornecedor. Em bancos antigos, produtos sem fornecedor devem ser resolvidos
-  antes de aplicar o esquema; a atualização não os apaga automaticamente.
+- Fornecedores seguem a mesma regra de acesso. Cada produto exige um fornecedor
+  cadastrado no mesmo CTE/Haras; "Ver produtos" filtra a lista pelo fornecedor.
+- Na tela de produtos, a seleção de centro filtra a lista e a visualização
+  mostra os detalhes de cada vigência. As permissões de alteração permanecem
+  restritas às versões futuras elegíveis.
 - O Financeiro ADMIN usa uma base própria. O Financeiro CTE/Haras permanece na
   base operacional; os dados financeiros dos dois módulos não são copiados ou
   combinados.
@@ -153,19 +154,8 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
 - No cadastro de cavalos, ADMIN tem acesso somente à consulta e vê o CTE/Haras
   responsável por cada registro, quando identificável. A inclusão, alteração e
   exclusão continuam disponíveis aos perfis CTE/Haras e OPERACIONAL autorizados.
-- Na inclusão de um cavalo, selecione quatro produtos vigentes: Feno, Ração,
-  Baia e Outros (nome diferente dos três anteriores). OPERACIONAL seleciona
-  primeiro um cadastro CTE/Haras do próprio centro; CTE/Haras usa seus produtos.
-  Os valores selecionados são somados na mensalidade, que pode ser alterada
-  manualmente e não é recalculada após salvar o cavalo. Mais de um registro
-  vigente para o mesmo código e subitem no CTE/Haras impede a inclusão e exige ajuste
-  do cadastro de produtos. Na consulta do cavalo, o produto é localizado pelo
-  CTE/Haras, código, subitem e data de inclusão do cavalo, sem copiar seu valor.
-  As datas de vigência e de inclusão usadas nessas consultas seguem o horário
-  de Brasília (`America/Sao_Paulo`), inclusive no cadastro de produtos.
-  A alteração dos demais dados de cavalos existentes não
-  exige preencher produtos antigos. A proteção contra exclusão de produtos
-  vinculados será implementada depois.
+- Cavalos não possuem vínculo com produtos. A mensalidade é informada manualmente
+  e valores já registrados permanecem inalterados.
 - Na consulta de clientes, ADMIN vê o vínculo CTE/Haras de cada cadastro. Usuários
   CTE/Haras veem somente os clientes criados pelo próprio login e não recebem
   essa coluna. A consulta, alteração e exclusão de cadastros CTE/Haras ficam
@@ -173,25 +163,26 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
 - O cadastro separado CTE/Haras usa os mesmos dados do formulário de clientes,
   exige a escolha do tipo e fica disponível somente para usuários ADMIN.
 - Produtos são separados por cadastro CTE/Haras e identificados por código
-  alfanumérico de até cinco caracteres e subitem de dois dígitos. Para um
-  código novo o primeiro subitem é 01; para um código existente, é sugerido
-  o maior subitem mais um, até 99. Nome, marca e fabricante são preenchidos
-  a partir do maior subitem. Para cadastrar uma nova vigência, digite um
-  subitem existente; código e subitem não podem ser alterados após salvar.
-  ADMIN pode consultar todos, sem alterá-los. Um novo registro do mesmo código e subitem
+  alfanumérico de até cinco caracteres. ADMIN pode consultar todos, sem alterá-los.
+  Um novo registro do mesmo código
   encerra a última vigência na data atual e cria outra para o dia seguinte até
   31/12/9999; não é possível versionar novamente antes de essa vigência começar.
-  Ao repetir um código e subitem, os dados da última versão são preenchidos e apenas
+  Ao repetir um código, os dados da última versão são preenchidos e apenas
   descrição e valor podem ser modificados. Essas mesmas informações podem ser
   alteradas em uma versão futura com fim em 31/12/9999.
   Uma versão pode ser excluída quando começa depois de hoje e termina em
-  31/12/9999. Após a exclusão, a versão restante de mesmo código e subitem com maior
+  31/12/9999. Após a exclusão, a versão restante de mesmo código com maior
   data de início passa a terminar em 31/12/9999; se não houver outra versão,
   nenhuma atualização adicional é necessária.
   Excluir um cadastro CTE/Haras também exclui seus produtos.
-  Execute `npm run db:setup` após atualizar o esquema. Produtos existentes
-  recebem subitem 01; códigos antigos fora do formato permitido devem ser
-  tratados antes da migração, que não os exclui.
+  As datas de vigência seguem o horário de Brasília (`America/Sao_Paulo`).
+  Execute `npm run db:setup` após atualizar o esquema. Em bases antigas,
+  a migração bloqueia códigos com múltiplos subitens, vínculos com cavalos ou
+  produtos sem fornecedor. Antes de continuar, faça backup, revise os dados e
+  vincule os produtos a fornecedores do mesmo centro; a migração não os apaga.
+  Se a coluna ainda não existir, prepare-a com
+  `ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS fornecedor_id uuid`
+  e preencha-a para cada produto antes de executar a migração novamente.
 - A conta inicial tem perfil `ADMIN`. `SUPER_ADMIN` é criado separadamente pelo
   seed. Para provisionar usuários `ADMIN` ou `OPERACIONAL`, defina
   `USER_NAME`, `USER_EMAIL`, `USER_PASSWORD`, `USER_TENANT_ID` e `USER_ROLE` em

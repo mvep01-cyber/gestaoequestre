@@ -1,13 +1,13 @@
 "use client";
 
-import { Plus, Search, X } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import type { ProviderCenter } from "./service-providers";
 
 type Product = {
   id: string;
+  cadastro_cte_haras_id: string;
   nome: string;
   codigo: string;
-  subitem: string;
   marca: string;
   fabricante: string;
   descricao: string;
@@ -20,11 +20,10 @@ type Product = {
   fornecedor_nome: string;
 };
 
-type ProductResponse = { products: Product[]; suppliers: { id: string; nome: string; cadastro_cte_haras_id: string }[]; hoje: string; amanha: string };
+type ProductResponse = { products: Product[]; centers: ProviderCenter[]; suppliers: { id: string; nome: string; cadastro_cte_haras_id: string }[]; hoje: string; amanha: string };
 type ProductForm = {
   nome: string;
   codigo: string;
-  subitem: string;
   marca: string;
   fabricante: string;
   descricao: string;
@@ -35,7 +34,7 @@ type ProductForm = {
 };
 
 const emptyForm: ProductForm = {
-  nome: "", codigo: "", subitem: "01", marca: "", fabricante: "", descricao: "", valor: "",
+  nome: "", codigo: "", marca: "", fabricante: "", descricao: "", valor: "",
   data_inicio: "", data_fim: "9999-12-31", fornecedor_id: "",
 };
 
@@ -51,15 +50,19 @@ function formatDate(value: string) {
   return `${day}/${month}/${year}`;
 }
 
-export function Products({ canCreate, demo, supplierFilter, onClearSupplier }: {
+export function Products({ canCreate, demo, centerId, onCentersChange, onCenterChange, supplierFilter, onClearSupplier }: {
   canCreate: boolean;
   demo: boolean;
+  centerId: string;
+  onCentersChange: Dispatch<SetStateAction<ProviderCenter[]>>;
+  onCenterChange: Dispatch<SetStateAction<string>>;
   supplierFilter: { id: string; nome: string } | null;
   onClearSupplier: () => void;
 }) {
   const [data, setData] = useState<ProductResponse | null>(null);
   const [form, setForm] = useState<ProductForm | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<Product | null>(null);
   const [search, setSearch] = useState("");
   const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(!demo);
@@ -69,7 +72,11 @@ export function Products({ canCreate, demo, supplierFilter, onClearSupplier }: {
     if (demo) return;
     let active = true;
     loadProducts().then((result) => {
-      if (active) setData(result);
+      if (active) {
+        setData(result);
+        onCentersChange(result.centers);
+        onCenterChange((current) => result.centers.some((center) => center.id === current) ? current : result.centers[0]?.id ?? "");
+      }
     }).catch((error: unknown) => {
       console.error("Falha ao consultar produtos:", error);
       if (active) setFeedback(error instanceof Error ? error.message : "Não foi possível consultar os produtos.");
@@ -77,16 +84,14 @@ export function Products({ canCreate, demo, supplierFilter, onClearSupplier }: {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [demo]);
+  }, [demo, onCentersChange, onCenterChange]);
 
-  const codeProduct = form && data?.products.find((product) => product.codigo === form.codigo.trim());
-  const existing = !editingId && form && data?.products.find((product) =>
-    product.codigo === form.codigo.trim() && product.subitem === form.subitem,
-  );
+  const codeProduct = form && data?.products.find((product) => product.cadastro_cte_haras_id === centerId && product.codigo === form.codigo.trim());
+  const existing = !editingId && codeProduct;
   const locked = Boolean(editingId || codeProduct);
   const filtered = (data?.products ?? []).filter((product) =>
-    (!supplierFilter || product.fornecedor_id === supplierFilter.id) &&
-    [product.codigo, product.subitem, product.nome, product.marca, product.fabricante, product.cadastro_nome, product.fornecedor_nome]
+    product.cadastro_cte_haras_id === centerId && (!supplierFilter || product.fornecedor_id === supplierFilter.id) &&
+    [product.codigo, product.nome, product.marca, product.fabricante, product.descricao, product.cadastro_nome, product.fornecedor_nome]
       .join(" ").toLocaleLowerCase("pt-BR").includes(search.trim().toLocaleLowerCase("pt-BR")),
   );
 
@@ -95,9 +100,9 @@ export function Products({ canCreate, demo, supplierFilter, onClearSupplier }: {
   }
 
   async function refreshAfterChange(message: string) {
-    setFeedback(message);
     try {
       setData(await loadProducts());
+      setFeedback(message);
     } catch (error) {
       console.error("Falha ao atualizar produtos:", error);
       setData(null);
@@ -167,106 +172,124 @@ export function Products({ canCreate, demo, supplierFilter, onClearSupplier }: {
 
   return (
     <>
-      {feedback && !form && <p className="feedback-message" role="status">{feedback}</p>}
-      <div className="list-toolbar">
-        <label className="search-box">
-          <Search size={20} />
-          <span className="sr-only">Buscar produto</span>
-          <input type="search" placeholder="Buscar produto, código ou marca" value={search} onChange={(event) => setSearch(event.target.value)} />
-        </label>
-        {canCreate && <button className="button button-primary" disabled={saving} onClick={() => { setFeedback(""); setEditingId(null); setForm({ ...emptyForm, data_inicio: data.hoje, fornecedor_id: supplierFilter?.id ?? "" }); }}><Plus size={20} /> Novo produto</button>}
+      {feedback && !form && !viewing && <p className="feedback-message" role="status">{feedback}</p>}
+      <div className="provider-toolbar">
+        <input className="provider-search" type="search" aria-label="Buscar nesta lista" placeholder="Buscar nesta lista" value={search} onChange={(event) => setSearch(event.target.value)} />
+        {canCreate && <button className="button button-primary" disabled={saving || !centerId} onClick={() => { setFeedback(""); setEditingId(null); setForm({ ...emptyForm, data_inicio: data.hoje, fornecedor_id: supplierFilter?.id ?? "" }); }}>＋ Novo produto</button>}
       </div>
+      {data.centers.length === 0 && <p role="status">Nenhum CTE/Haras disponível para este cadastro.</p>}
       {supplierFilter && <div className="provider-note">Produtos de <strong>{supplierFilter.nome}</strong> <button type="button" className="button button-quiet provider-small-button" onClick={onClearSupplier}>Ver todos</button></div>}
-      {filtered.length === 0 ? <div className="panel empty-state"><h2>Nenhum produto encontrado</h2></div> : (
-        <div className="client-table-wrap">
-          <table className="client-table">
-            <thead><tr>{!canCreate && <th>CTE/Haras</th>}<th>Código</th><th>Subitem</th><th>Nome</th><th>Fornecedor</th><th>Marca</th><th>Fabricante</th><th>Descrição</th><th>Valor</th><th>Início</th><th>Fim</th>{canCreate && <th>Ações</th>}</tr></thead>
+        <div className="provider-table-wrap">
+          <table className="provider-table">
+            <thead><tr><th scope="col">Fornecedor</th><th scope="col">Código</th><th scope="col">Nome</th><th scope="col">Marca</th><th scope="col">Valor</th><th scope="col">Início</th><th scope="col">Fim</th><th scope="col">Ações</th></tr></thead>
             <tbody>{filtered.map((product) => (
               <tr key={product.id}>
-                {!canCreate && <td>{product.cadastro_nome} ({product.tipo_cadastro})</td>}
-                <td>{product.codigo}</td><td>{product.subitem}</td><td>{product.nome}</td><td>{product.fornecedor_nome}</td><td>{product.marca || "—"}</td><td>{product.fabricante || "—"}</td>
-                <td>{product.descricao || "—"}</td><td>{Number(product.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
+                <td>{product.fornecedor_nome}</td><td>{product.codigo}</td><td>{product.nome}</td><td>{product.marca || "—"}</td>
+                <td>{Number(product.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
                 <td>{formatDate(product.data_inicio)}</td><td>{formatDate(product.data_fim)}</td>
-                {canCreate && <td><div className="client-row-actions">
-                  {product.data_inicio > data.hoje && product.data_fim === "9999-12-31" && (
-                    <button className="button button-secondary" disabled={saving} onClick={() => {
+                <td><div className="provider-row-actions">
+                  <button type="button" className="button button-secondary provider-small-button" disabled={saving} onClick={() => { setFeedback(""); setViewing(product); }}>Visualizar</button>
+                  {canCreate && product.data_inicio > data.hoje && product.data_fim === "9999-12-31" && (
+                    <button className="button button-quiet provider-small-button" disabled={saving} onClick={() => {
                       setFeedback("");
                       setEditingId(product.id);
                       setForm({
-                        codigo: product.codigo, subitem: product.subitem, nome: product.nome, marca: product.marca,
+                        codigo: product.codigo, nome: product.nome, marca: product.marca,
                         fabricante: product.fabricante, descricao: product.descricao, valor: product.valor,
                         data_inicio: product.data_inicio, data_fim: product.data_fim, fornecedor_id: product.fornecedor_id,
                       });
                     }}>Alterar</button>
                   )}
-                  {product.data_inicio > data.hoje && (
+                  {canCreate && product.data_inicio > data.hoje && (
                     <>
-                      <button className="button button-quiet" disabled={saving || !canDelete(product)}
+                      <button className="button button-quiet provider-small-button" disabled={saving || !canDelete(product)}
                         onClick={() => void remove(product)}>Excluir</button>
                       {!canDelete(product) && <small>Exige fim de vigência em 31/12/9999.</small>}
                     </>
                   )}
-                </div></td>}
+                </div></td>
               </tr>
-            ))}</tbody>
+            ))}
+            {filtered.length === 0 && <tr><td className="provider-empty" colSpan={8}>Nenhum registro encontrado.</td></tr>}
+            </tbody>
           </table>
         </div>
-      )}
-      {form && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setForm(null); }}>
-          <section className="modal-card client-modal-card" role="dialog" aria-modal="true" aria-labelledby="product-form-title">
-            <div className="modal-heading">
-              <h2 id="product-form-title">{editingId ? "Alterar produto" : "Novo produto"}</h2>
-              <button type="button" className="icon-button" aria-label="Fechar" disabled={saving} onClick={() => setForm(null)}><X size={22} /></button>
+      <div className="provider-note">Cada produto pertence a um fornecedor do mesmo CTE/Haras. A alteração e a exclusão estão disponíveis para vigências futuras elegíveis.</div>
+      {(form || viewing) && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setForm(null); setViewing(null); } }}>
+          <section className="modal-card provider-modal" role="dialog" aria-modal="true" aria-labelledby="product-form-title">
+            <div className="provider-modal-heading">
+              <h2 id="product-form-title">{viewing ? "Visualizar registro" : editingId ? "Alterar — Produto" : "Produto"}</h2>
+              <button type="button" className="provider-close" aria-label="Fechar" disabled={saving} onClick={() => { setForm(null); setViewing(null); }}>×</button>
             </div>
-            <form className="client-form" onSubmit={(event) => void submit(event)}>
-              <label htmlFor="product-supplier">Fornecedor responsável</label>
-              <select id="product-supplier" required disabled={Boolean(editingId)} value={form.fornecedor_id} onChange={(event) => setForm({ ...form, fornecedor_id: event.target.value })}>
-                <option value="">Selecione</option>{data.suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.nome}</option>)}
-              </select>
-              {data.suppliers.length === 0 && <p>Cadastre um fornecedor antes de cadastrar produtos.</p>}
-              <label htmlFor="product-code">Código do produto</label>
+            {viewing ? <>
+              <div className="provider-form-grid">
+                {[
+                  ["CTE/Haras", viewing.cadastro_nome], ["Fornecedor", viewing.fornecedor_nome],
+                  ["Código", viewing.codigo], ["Nome", viewing.nome],
+                  ["Marca", viewing.marca], ["Fabricante", viewing.fabricante], ["Descrição", viewing.descricao],
+                  ["Valor", Number(viewing.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })],
+                  ["Início", formatDate(viewing.data_inicio)], ["Fim", formatDate(viewing.data_fim)],
+                ].map(([label, value]) => <div className="provider-field" key={label}><span>{label}</span><strong>{value || "—"}</strong></div>)}
+              </div>
+              <div className="provider-form-actions"><button type="button" className="button button-secondary" onClick={() => setViewing(null)}>Fechar</button></div>
+            </> : form && <form onSubmit={(event) => void submit(event)}>
+              <div className="provider-form-grid">
+              <label className="provider-field" htmlFor="product-center">CTE/Haras
+                <select id="product-center" disabled value={centerId}>
+                  {data.centers.map((center) => <option key={center.id} value={center.id}>{center.nome}</option>)}
+                </select>
+              </label>
+              <label className="provider-field" htmlFor="product-supplier">Fornecedor responsável
+                <select id="product-supplier" required disabled={Boolean(editingId)} value={form.fornecedor_id} onChange={(event) => setForm({ ...form, fornecedor_id: event.target.value })}>
+                  <option value="">Selecione</option>
+                  {data.suppliers.filter((supplier) => supplier.cadastro_cte_haras_id === centerId).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.nome}</option>)}
+                </select>
+              </label>
+              <label className="provider-field" htmlFor="product-code">Código do produto
               <input id="product-code" required maxLength={5} pattern="[A-Za-z0-9]{1,5}" readOnly={!!editingId} value={form.codigo} onChange={(event) => {
                 const codigo = event.target.value;
-                const product = data.products.find((item) => item.codigo === codigo.trim());
-                const next = product ? Number(product.subitem) + 1 : 1;
+                const product = data.products.find((item) => item.cadastro_cte_haras_id === centerId && item.codigo === codigo.trim());
                 setForm({
-                  ...emptyForm, codigo, fornecedor_id: form.fornecedor_id, subitem: next <= 99 ? String(next).padStart(2, "0") : "",
+                  ...emptyForm, codigo,
+                  fornecedor_id: form.fornecedor_id || product?.fornecedor_id || "",
                   nome: product?.nome ?? "", marca: product?.marca ?? "", fabricante: product?.fabricante ?? "",
-                  data_inicio: data.hoje,
+                  descricao: product?.descricao ?? "", valor: product?.valor ?? "",
+                  data_inicio: product ? data.amanha : data.hoje,
                 });
               }} />
-              <label htmlFor="product-subitem">Subitem</label>
-              <input id="product-subitem" required inputMode="numeric" pattern="[0-9]{2}" maxLength={2} readOnly={!!editingId} value={form.subitem} onChange={(event) => {
-                const subitem = event.target.value;
-                const product = data.products.find((item) => item.codigo === form.codigo.trim() && item.subitem === subitem);
-                setForm({
-                  ...form, subitem, descricao: product?.descricao ?? "", valor: product?.valor ?? "",
-                  data_inicio: product ? data.amanha : data.hoje, data_fim: "9999-12-31",
-                });
-              }} />
-              {!editingId && codeProduct?.subitem === "99" && <p>Limite de novos subitens atingido. Informe um subitem existente para criar nova vigência.</p>}
-              <label htmlFor="product-name">Nome do produto</label>
+              </label>
+              <label className="provider-field" htmlFor="product-name">Nome do produto
               <input id="product-name" required maxLength={200} readOnly={locked} value={form.nome} onChange={(event) => setForm({ ...form, nome: event.target.value })} />
-              <label className="optional-field" htmlFor="product-brand">Marca do produto</label>
+              </label>
+              <label className="provider-field" htmlFor="product-brand">Marca
               <input id="product-brand" maxLength={200} readOnly={locked} value={form.marca} onChange={(event) => setForm({ ...form, marca: event.target.value })} />
-              <label className="optional-field" htmlFor="product-maker">Fabricante do produto</label>
+              </label>
+              <label className="provider-field" htmlFor="product-maker">Fabricante
               <input id="product-maker" maxLength={200} readOnly={locked} value={form.fabricante} onChange={(event) => setForm({ ...form, fabricante: event.target.value })} />
-              <label className="optional-field" htmlFor="product-description">Descrição do produto</label>
-              <input id="product-description" maxLength={2000} value={form.descricao} onChange={(event) => setForm({ ...form, descricao: event.target.value })} />
-              <label htmlFor="product-value">Valor do produto (R$)</label>
+              </label>
+              <label className="provider-field provider-field-full" htmlFor="product-description">Descrição
+              <textarea id="product-description" maxLength={2000} value={form.descricao} onChange={(event) => setForm({ ...form, descricao: event.target.value })} />
+              </label>
+              <label className="provider-field" htmlFor="product-value">Valor (R$)
               <input id="product-value" type="number" min="0" max="9999999999.99" step="0.01" required value={form.valor} onChange={(event) => setForm({ ...form, valor: event.target.value })} />
-              <label htmlFor="product-start">Data de início de vigência</label>
+              </label>
+              <label className="provider-field" htmlFor="product-start">Início da vigência
               <input id="product-start" type="date" required max="9999-12-31" value={existing ? data.amanha : form.data_inicio} readOnly={locked} onChange={(event) => setForm({ ...form, data_inicio: event.target.value })} />
-              <label htmlFor="product-end">Data de fim de vigência</label>
+              </label>
+              <label className="provider-field" htmlFor="product-end">Fim da vigência
               <input id="product-end" type="date" required min={existing ? data.amanha : form.data_inicio} max="9999-12-31" value={existing ? "9999-12-31" : form.data_fim} readOnly={locked} onChange={(event) => setForm({ ...form, data_fim: event.target.value })} />
-              {existing && <p>Produto existente: a última vigência será encerrada hoje e a nova começará amanhã.</p>}
-              {feedback && <p className="client-form-error" role="alert">{feedback}</p>}
-              <div className="modal-actions">
-                <button type="button" className="button button-quiet" disabled={saving} onClick={() => setForm(null)}>Cancelar</button>
-                <button className="button button-primary" disabled={saving}>{saving ? "Salvando..." : "Salvar produto"}</button>
+              </label>
               </div>
-            </form>
+              {!data.suppliers.some((supplier) => supplier.cadastro_cte_haras_id === centerId) && <p className="provider-form-note">Cadastre um fornecedor neste CTE/Haras antes de cadastrar produtos.</p>}
+              {existing && <p className="provider-form-note">Produto existente: a última vigência será encerrada hoje e a nova começará amanhã.</p>}
+              <p className="provider-form-note">Para trocar o centro, feche o formulário e selecione-o no topo.</p>
+              {feedback && <p className="client-form-error" role="alert">{feedback}</p>}
+              <div className="provider-form-actions">
+                <button type="button" className="button button-quiet" disabled={saving} onClick={() => setForm(null)}>Cancelar</button>
+                <button className="button button-primary" disabled={saving}>{saving ? "Salvando..." : "Salvar"}</button>
+              </div>
+            </form>}
           </section>
         </div>
       )}

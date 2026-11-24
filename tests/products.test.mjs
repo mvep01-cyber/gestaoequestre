@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import net from "node:net";
 import path from "node:path";
 import pg from "pg";
@@ -39,20 +39,6 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     const b = await registration("Centro B", "HARAS");
     const supplierA = (await db.query("insert into fornecedores (tenant_id,cadastro_cte_haras_id,nome) values ($1,$2,'Fornecedor A') returning id", [tenant, a])).rows[0].id;
     const supplierB = (await db.query("insert into fornecedores (tenant_id,cadastro_cte_haras_id,nome) values ($1,$2,'Fornecedor B') returning id", [tenant, b])).rows[0].id;
-    await db.query("alter table produtos alter column fornecedor_id drop not null");
-    const unassigned = (await db.query(
-      "insert into produtos (tenant_id,cadastro_cte_haras_id,codigo,nome,valor,data_inicio,data_fim) values ($1,$2,'SEM','Sem fornecedor',1,current_date,current_date) returning id",
-      [tenant, a],
-    )).rows[0].id;
-    const supplierMigrationStart = schema.indexOf("alter table public.produtos add column if not exists fornecedor_id uuid;");
-    const supplierMigrationEnd = schema.indexOf("alter table public.produtos add column if not exists subitem text;", supplierMigrationStart);
-    assert(supplierMigrationStart >= 0 && supplierMigrationEnd > supplierMigrationStart);
-    const supplierMigration = schema.slice(supplierMigrationStart, supplierMigrationEnd);
-    await assert.rejects(db.query(supplierMigration), { code: "23502" });
-    assert.equal((await db.query("select id from produtos where id=$1", [unassigned])).rowCount, 1);
-    await db.query("delete from produtos where id=$1", [unassigned]);
-    await db.query(supplierMigration);
-    await db.query(supplierMigration);
     async function user(email, role, registrationId = null) {
       return (await db.query(
         "insert into usuarios (tenant_id,cadastro_cte_haras_id,nome,email,senha_hash,perfil) values ($1,$2,$3,$3,$4,$5) returning id",
@@ -70,44 +56,41 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
               ($1, $2, 'Cavalo sem foto', null)`,
       [tenant, userA],
     );
+    await db.query(`alter table produtos drop constraint produtos_cadastro_codigo_inicio_key,
+      add column subitem text not null default '01', alter column fornecedor_id drop not null;
+      alter table produtos add constraint produtos_cadastro_codigo_subitem_inicio_key
+      unique (cadastro_cte_haras_id, codigo, subitem, data_inicio);
+      create table equinos_produtos (equino_id uuid, produto_id uuid)`);
     const migrationProduct = (await db.query(
       `insert into produtos (tenant_id, cadastro_cte_haras_id, fornecedor_id, codigo, nome, valor, data_inicio, data_fim)
        values ($1,$2,$3,'MIG','Feno',1,current_date,current_date) returning id`,
       [tenant, a, supplierA],
     )).rows[0].id;
-    await db.query(
-      `alter table produtos drop constraint produtos_codigo_formato_check,
-       drop constraint produtos_subitem_formato_check, drop constraint produtos_cadastro_codigo_subitem_inicio_key,
-       drop column subitem;
-       alter table produtos add constraint produtos_cadastro_cte_haras_id_codigo_data_inicio_key
-       unique (cadastro_cte_haras_id, codigo, data_inicio)`,
-    );
-    const productMigrationStart = schema.indexOf("alter table public.produtos add column if not exists subitem text;");
-    const productMigrationEnd = schema.indexOf("end $$;", productMigrationStart);
-    assert(productMigrationStart >= 0 && productMigrationEnd > productMigrationStart);
-    const productMigration = schema.slice(productMigrationStart, productMigrationEnd + "end $$;".length);
-    await db.query(productMigration);
-    await db.query(productMigration);
-    assert.equal((await db.query("select subitem from produtos where id = $1", [migrationProduct])).rows[0].subitem, "01");
+    const conflict = (await db.query(
+      `insert into produtos (tenant_id, cadastro_cte_haras_id, fornecedor_id, codigo, subitem, nome, valor, data_inicio, data_fim)
+       values ($1,$2,$3,'MIG','02','Feno',1,current_date - 1,current_date - 1) returning id`,
+      [tenant, a, supplierA],
+    )).rows[0].id;
+    await assert.rejects(db.query(schema), /múltiplos subitens/);
+    await db.query("delete from produtos where id = $1", [conflict]);
     const migrationHorse = (await db.query("select id from equinos where nome = 'Cavalo legado'")).rows[0].id;
-    await db.query("alter table equinos_produtos drop column produto_codigo, drop column produto_cadastro_id, drop column produto_subitem");
     await db.query(
-      "insert into equinos_produtos (equino_id,tenant_id,categoria,produto_id) values ($1,$2,'feno',$3)",
-      [migrationHorse, tenant, migrationProduct],
+      "insert into equinos_produtos (equino_id,produto_id) values ($1,$2)",
+      [migrationHorse, migrationProduct],
     );
-    const migration = schema.match(/alter table public\.equinos_produtos\r?\n  add column if not exists produto_codigo text,[\s\S]*?and \(ep\.produto_codigo is null or ep\.produto_cadastro_id is null\);/);
-    assert(migration);
-    await db.query(migration[0]);
-    await db.query(migration[0]);
-    const subitemMigration = schema.match(/alter table public\.equinos_produtos add column if not exists produto_subitem text;[\s\S]*?where p\.id = ep\.produto_id and ep\.produto_subitem is null;/);
-    assert(subitemMigration);
-    await db.query(subitemMigration[0]);
-    await db.query(subitemMigration[0]);
-    const migrated = (await db.query(
-      "select produto_codigo,produto_cadastro_id,produto_subitem from equinos_produtos where equino_id = $1", [migrationHorse],
-    )).rows[0];
-    assert.deepEqual(migrated, { produto_codigo: "MIG", produto_cadastro_id: a, produto_subitem: "01" });
-    await db.query("delete from equinos_produtos where equino_id = $1", [migrationHorse]);
+    await assert.rejects(db.query(schema), /vínculos de produtos com cavalos/);
+    assert.equal((await db.query("select id from produtos where id = $1", [migrationProduct])).rowCount, 1);
+    await db.query("delete from equinos_produtos");
+    await db.query("update produtos set fornecedor_id = null where id = $1", [migrationProduct]);
+    await assert.rejects(db.query(schema), /produtos sem fornecedor/);
+    assert.equal((await db.query("select id from produtos where id = $1", [migrationProduct])).rowCount, 1);
+    await db.query("update produtos set fornecedor_id = $1 where id = $2", [supplierA, migrationProduct]);
+    await db.query(schema);
+    await db.query(schema);
+    assert.equal((await db.query("select id from produtos where id = $1", [migrationProduct])).rowCount, 1);
+    const columns = (await db.query("select column_name from information_schema.columns where table_schema='public' and table_name='produtos'")).rows.map((row) => row.column_name);
+    assert(!columns.includes("subitem") && columns.includes("fornecedor_id"));
+    assert.equal((await db.query("select to_regclass('public.equinos_produtos') as name")).rows[0].name, null);
     await db.query("delete from produtos where id = $1", [migrationProduct]);
     const dates = (await db.query(
       "select (current_date - 5)::text as inicio, current_date::text as hoje, (current_date + 1)::text as amanha",
@@ -169,7 +152,7 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal(productDates.hoje, dates.hoje);
     assert.equal(productDates.amanha, dates.amanha);
     const input = {
-      codigo: "P01", subitem: "01", nova_vigencia: false, nome: "Produto A", marca: "Marca", fabricante: "Fabricante",
+      codigo: "P01", nova_vigencia: false, nome: "Produto A", marca: "Marca", fabricante: "Fabricante",
       descricao: "Descrição", valor: "12.50", data_inicio: dates.inicio, data_fim: "9999-12-31", fornecedor_id: supplierA,
     };
     async function create(request, fields) {
@@ -199,24 +182,33 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await create(clientA, { ...input, valor: "1.999" })).status, 400);
     assert.equal((await create(clientA, { ...input, codigo: "ABC123" })).status, 400);
     assert.equal((await create(clientA, { ...input, codigo: "A-1" })).status, 400);
-    assert.equal((await create(clientA, { ...input, subitem: "1" })).status, 400);
+    assert.equal((await create(clientA, { ...input, subitem: "01" })).status, 400);
     assert.equal((await create(clientA, { ...input, fornecedor_id: "" })).status, 400);
     assert.equal((await create(clientA, { ...input, fornecedor_id: supplierB })).status, 400);
-    assert.equal((await create(clientA, { ...input, subitem: "02" })).status, 409);
     assert.equal((await create(clientA, input)).status, 201);
     assert.equal((await create(clientB, { ...input, nome: "Produto B", fornecedor_id: supplierB })).status, 201);
+    assert.equal((await create(clientA, input)).status, 409);
     const suppliersA = (await (await clientA("/api/suppliers")).json()).suppliers;
     assert.equal(suppliersA[0].id, supplierA);
     assert.equal(suppliersA[0].produtos, 1);
-    assert.equal((await (await clientA("/api/products")).json()).products[0].fornecedor_id, supplierA);
+    assert.deepEqual((await (await clientA("/api/products")).json()).products.map((p) => p.nome), ["Produto A"]);
+    assert.deepEqual((await (await clientB("/api/products")).json()).products.map((p) => p.nome), ["Produto B"]);
+    const clientProductList = await (await clientA("/api/products")).json();
+    assert.deepEqual(clientProductList.centers.map((center) => center.id), [a]);
+    assert.equal(clientProductList.products[0].cadastro_cte_haras_id, a);
+    assert.equal("subitem" in clientProductList.products[0], false);
+    assert.equal(clientProductList.products[0].fornecedor_id, supplierA);
     await assert.rejects(db.query(
       `insert into produtos (tenant_id,cadastro_cte_haras_id,fornecedor_id,codigo,nome,valor,data_inicio,data_fim)
        values ($1,$2,$3,'ERR','Erro',1,current_date,current_date)`,
       [tenant, a, supplierB],
     ), { code: "23503" });
-    assert.deepEqual((await (await clientA("/api/products")).json()).products.map((p) => p.nome), ["Produto A"]);
-    assert.deepEqual((await (await clientB("/api/products")).json()).products.map((p) => p.nome), ["Produto B"]);
-    assert.equal((await (await admin("/api/products")).json()).products.length, 2);
+    const adminProductList = await (await admin("/api/products")).json();
+    assert.equal(adminProductList.products.length, 2);
+    assert.deepEqual(adminProductList.centers.map((center) => center.id), [a, b]);
+    assert.deepEqual(adminProductList.products.map((product) => product.cadastro_cte_haras_id), [a, b]);
+    assert.equal((await create(clientA, { ...input, nova_vigencia: true, fornecedor_id: supplierB })).status, 400);
+    assert.equal((await (await clientA("/api/products")).json()).products[0].data_fim, "9999-12-31");
 
     const simultaneous = await Promise.all([
       create(clientA, { ...input, nova_vigencia: true, nome: "Nome adulterado", marca: "Outra marca", fabricante: "Outro fabricante", descricao: "Versão 2", valor: "20.00" }),
@@ -233,6 +225,7 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert(["Versão 2", "Versão concorrente"].includes(products[0].descricao));
     assert.equal(products[1].data_inicio, dates.inicio);
     assert.equal(products[1].data_fim, dates.hoje);
+    assert.equal((await (await clientA("/api/suppliers")).json()).suppliers[0].produtos, 1);
     assert.equal((await create(clientA, { ...input, nova_vigencia: true })).status, 409);
     assert.equal((await (await clientB("/api/products")).json()).products[0].data_fim, "9999-12-31");
 
@@ -241,7 +234,7 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await update(operational, changes)).status, 403);
     assert.equal((await update(clientB, changes)).status, 404);
     assert.equal((await update(clientA, { ...changes, nome: "Tentativa indevida" })).status, 400);
-    assert.equal((await update(clientA, { ...changes, codigo: "TESTE", subitem: "02" })).status, 400);
+    assert.equal((await update(clientA, { ...changes, codigo: "TESTE" })).status, 400);
     assert.equal((await update(clientA, { ...changes, valor: "1.999" })).status, 400);
     assert.equal((await update(clientA, { ...changes, id: products[1].id })).status, 404);
     assert.equal((await clientA("/api/products", {
@@ -326,147 +319,24 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal(afterRemoval.find((item) => item.id === earlier.id).data_fim, earlier.data_fim);
     await db.query("delete from produtos where id = any($1::uuid[])", [versions.map((item) => item.id)]);
 
-    assert.equal((await create(clientA, { ...input, codigo: "IT1" })).status, 201);
-    assert.equal((await create(clientA, { ...input, codigo: "IT1", subitem: "03" })).status, 409);
-    const subitems = await Promise.all([
-      create(clientA, { ...input, codigo: "IT1", subitem: "02", nome: "Nome indevido", marca: "Outra", fabricante: "Outro" }),
-      create(clientA, { ...input, codigo: "IT1", subitem: "02" }),
-    ]);
-    assert.deepEqual(subitems.map((response) => response.status).sort(), [201, 409]);
-    let items = (await (await clientA("/api/products")).json()).products.filter((item) => item.codigo === "IT1");
-    assert.deepEqual(items.map((item) => item.subitem), ["02", "01"]);
-    assert(items.every((item) => item.nome === input.nome && item.marca === input.marca && item.fabricante === input.fabricante));
-    const secondId = items.find((item) => item.subitem === "02").id;
-    await db.query("update produtos set data_fim = current_date + 5 where id = $1", [secondId]);
-    const secondEnd = (await db.query("select data_fim::text as fim from produtos where id = $1", [secondId])).rows[0].fim;
-    const version = await create(clientA, { ...input, codigo: "IT1", nova_vigencia: true });
-    assert.equal(version.status, 201);
-    items = (await (await clientA("/api/products")).json()).products.filter((item) => item.codigo === "IT1");
-    assert.equal(items.find((item) => item.id === secondId).data_fim, secondEnd);
-    assert.equal(items.filter((item) => item.subitem === "01").length, 2);
-    assert.equal((await remove(clientA, (await version.json()).id)).status, 200);
-    assert.equal((await db.query("select data_fim::text as fim from produtos where id = $1", [secondId])).rows[0].fim, secondEnd);
-    await db.query("delete from produtos where cadastro_cte_haras_id = $1 and codigo = 'IT1'", [a]);
-    await db.query(
-      `insert into produtos (tenant_id,cadastro_cte_haras_id,codigo,subitem,nome,valor,data_inicio,data_fim,fornecedor_id)
-       values ($1,$2,'LIM','99','Teste',1,current_date - 1,'9999-12-31',$3)`,
-      [tenant, a, supplierA],
-    );
-    assert.equal((await create(clientA, { ...input, codigo: "LIM", subitem: "00" })).status, 409);
-    assert.equal((await create(clientA, { ...input, codigo: "LIM", subitem: "99", nova_vigencia: true })).status, 201);
-    await db.query("delete from produtos where cadastro_cte_haras_id = $1 and codigo = 'LIM'", [a]);
-
-    const fixtures = (await db.query(
-      `insert into produtos
-       (tenant_id, cadastro_cte_haras_id, criado_por, codigo, nome, marca, fabricante, descricao, valor, data_inicio, data_fim, fornecedor_id)
-       values
-         ($1,$2,$3,'FE','Feno','Marca','Fabricante','Feno vigente',10,current_date - 1,current_date,$4),
-         ($1,$2,$3,'RA','Ração','Marca','Fabricante','Ração vigente',20,current_date,current_date,$4),
-         ($1,$2,$3,'BA','Baia','Marca','Fabricante','Baia vigente',30,current_date,current_date + 1,$4),
-         ($1,$2,$3,'OU','Suplemento','Marca','Fabricante','Outro vigente',40,current_date - 1,current_date + 1,$4),
-         ($1,$2,$3,'FU','Feno','Marca','Fabricante','Futuro',50,current_date + 1,'9999-12-31',$4),
-         ($1,$2,$3,'EX','Feno','Marca','Fabricante','Expirado',60,current_date - 2,current_date - 1,$4)
-       returning id,codigo`,
-      [tenant, a, userA, supplierA],
-    )).rows;
-    const ids = Object.fromEntries(fixtures.map((product) => [product.codigo, product.id]));
-    const alternative = (await db.query(
-      `insert into produtos (tenant_id,cadastro_cte_haras_id,codigo,subitem,nome,marca,valor,data_inicio,data_fim,fornecedor_id)
-       values ($1,$2,'FE','02','Feno','Marca',12,current_date - 1,current_date + 1,$3) returning id`,
-      [tenant, a, supplierA],
-    )).rows[0].id;
-    const selection = { feno: ids.FE, racao: ids.RA, baia: ids.BA, outros: ids.OU };
-    const catalogA = await (await clientA("/api/horse-products")).json();
-    assert(catalogA.products.some((product) => product.id === ids.FE));
-    assert(catalogA.products.some((product) => product.id === ids.RA));
-    assert(catalogA.products.filter((product) => product.codigo === "FE").every((product) => !product.duplicado));
-    assert(!catalogA.products.some((product) => product.id === ids.FU || product.id === ids.EX));
-    assert.equal((await clientB(`/api/horse-products?cadastroId=${a}`)).status, 403);
-    assert.equal((await operational(`/api/horse-products?cadastroId=${a}`)).status, 200);
-    assert.equal((await operational(`/api/horse-products?cadastroId=${randomUUID()}`)).status, 403);
-    const operationalCatalog = await (await operational("/api/horse-products")).json();
-    assert.equal(operationalCatalog.registrations.length, 2);
-    assert.deepEqual(operationalCatalog.products, []);
     async function horseAction(request, fields) {
       return request("/api/actions", {
         method: "POST", headers: { "content-type": "application/json", origin: base },
         body: JSON.stringify({ action: "createHorse", nome: "Cavalo novo", ...fields }),
       });
     }
-    const horseCount = (await db.query("select count(*)::int as total from equinos")).rows[0].total;
-    assert.equal((await horseAction(clientA, {})).status, 400);
-    assert.equal((await horseAction(clientA, { produto_cadastro_id: a, produtos: { ...selection, feno: ids.FU } })).status, 400);
-    assert.equal((await horseAction(clientA, { produto_cadastro_id: a, produtos: { ...selection, feno: ids.EX } })).status, 400);
-    assert.equal((await horseAction(clientA, { produto_cadastro_id: a, produtos: { ...selection, feno: ids.OU, outros: ids.FE } })).status, 400);
-    assert.equal((await horseAction(clientB, { produto_cadastro_id: a, produtos: selection })).status, 400);
-    assert.equal((await horseAction(operational, { produto_cadastro_id: b, produtos: selection })).status, 400);
-    assert.equal((await db.query("select count(*)::int as total from equinos")).rows[0].total, horseCount);
-    const duplicate = (await db.query(
-      `insert into produtos
-       (tenant_id, cadastro_cte_haras_id, criado_por, codigo, nome, marca, descricao, valor, data_inicio, data_fim, fornecedor_id)
-       values ($1,$2,$3,'FE','Outro nome','Outra marca','Duplicado',11,current_date,current_date + 1,$4)
-       returning id`,
-      [tenant, a, userA, supplierA],
-    )).rows[0].id;
-    const duplicateCatalog = (await (await clientA("/api/horse-products")).json()).products;
-    assert(duplicateCatalog.filter((item) => item.codigo === "FE" && item.subitem === "01").every((item) => item.duplicado));
-    assert.equal(duplicateCatalog.find((item) => item.id === alternative).duplicado, false);
-    const blockedHorse = await horseAction(clientA, { produto_cadastro_id: a, produtos: selection });
-    assert.equal(blockedHorse.status, 409);
-    assert.equal((await blockedHorse.json()).error, "Ajuste o cadastro de produtos.");
-    assert.equal((await db.query("select count(*)::int as total from equinos")).rows[0].total, horseCount);
-    await db.query("delete from produtos where id = $1", [duplicate]);
-    await db.query(
-      `insert into produtos (tenant_id, cadastro_cte_haras_id, codigo, nome, valor, data_inicio, data_fim, fornecedor_id)
-       values ($1,$2,'FE','Feno',50,current_date,current_date + 1,$3)`,
-      [tenant, b, supplierB],
-    );
-    assert.equal((await (await clientA("/api/horse-products")).json()).products.find((item) => item.id === ids.FE).duplicado, false);
-    const createdHorse = await horseAction(clientA, { produto_cadastro_id: a, produtos: selection, valor_mensalidade: 85.67 });
+    const createdHorse = await horseAction(clientA, { valor_mensalidade: 85.67 });
     assert.equal(createdHorse.status, 201);
     const horseId = (await createdHorse.json()).horse.id;
-    const links = (await db.query("select categoria,produto_id from equinos_produtos where equino_id = $1", [horseId])).rows;
-    assert.deepEqual(Object.fromEntries(links.map((link) => [link.categoria, link.produto_id])), selection);
-    assert.equal((await clientB(`/api/horse-products?horseId=${horseId}`)).status, 404);
-    assert.equal((await operational(`/api/horse-products?horseId=${horseId}`)).status, 404);
-    assert.equal((await admin(`/api/horse-products?horseId=${horseId}`)).status, 200);
-    await db.query("update produtos set valor = 99.87 where id = $1", [ids.FE]);
-    const linkedProducts = (await (await clientA(`/api/horse-products?horseId=${horseId}`)).json()).selections;
-    assert.equal(linkedProducts.find((item) => item.categoria === "feno").valor, "99.87");
     assert.equal((await db.query("select valor_mensalidade::text as valor from equinos where id = $1", [horseId])).rows[0].valor, "85.67");
-    const historic = (await db.query(
-      `insert into produtos
-       (tenant_id, cadastro_cte_haras_id, codigo, nome, marca, descricao, valor, data_inicio, data_fim, fornecedor_id)
-       values ($1,$2,'FE','Feno','Marca','Feno histórico',7.25,current_date - 11,current_date - 9,$3)
-       returning id`,
-      [tenant, a, supplierA],
-    )).rows[0].id;
-    await db.query("update equinos set created_at = current_date - 10 where id = $1", [horseId]);
-    const historicProducts = (await (await clientA(`/api/horse-products?horseId=${horseId}`)).json()).selections;
-    assert.equal(historicProducts.find((item) => item.categoria === "feno").produto_id, historic);
-    assert.equal(historicProducts.find((item) => item.categoria === "feno").valor, "7.25");
-    const historicDuplicate = (await db.query(
-      `insert into produtos (tenant_id, cadastro_cte_haras_id, codigo, nome, valor, data_inicio, data_fim, fornecedor_id)
-       values ($1,$2,'FE','Feno',8,current_date - 12,current_date - 8,$3) returning id`,
-      [tenant, a, supplierA],
-    )).rows[0].id;
-    assert.equal((await clientA(`/api/horse-products?horseId=${horseId}`)).status, 409);
-    await db.query("delete from produtos where id = $1", [historicDuplicate]);
-    await db.query("update produtos set data_inicio = '2024-12-31', data_fim = '2025-01-01' where id = $1", [historic]);
-    await db.query("update equinos set created_at = '2025-01-02 01:00:00+00'::timestamptz where id = $1", [horseId]);
-    const timezoneProducts = (await (await clientA(`/api/horse-products?horseId=${horseId}`)).json()).selections;
-    assert.equal(timezoneProducts.find((item) => item.categoria === "feno").produto_id, historic);
-    assert.match(await (await clientA("/dashboard")).text(), />01\/01\/2025</);
-    await db.query("delete from produtos where id = $1", [historic]);
-    await db.query("delete from produtos where id = $1", [alternative]);
-    await db.query("update equinos set created_at = now() where id = $1", [horseId]);
-    const operationalHorse = await horseAction(operational, { produto_cadastro_id: a, produtos: selection });
-    assert.equal(operationalHorse.status, 201);
-    assert.equal((await operational(`/api/horse-products?horseId=${(await operationalHorse.json()).horse.id}`)).status, 200);
+    assert.equal((await horseAction(operational, {})).status, 201);
+    assert.equal((await horseAction(admin, {})).status, 403);
+    assert.equal((await horseAction(clientA, { produtos: {} })).status, 400);
+    assert.equal((await clientA("/api/horse-products")).status, 404);
 
     await db.query("delete from usuarios where email = 'a@test.invalid'");
     const retained = await db.query("select criado_por from produtos where cadastro_cte_haras_id = $1", [a]);
-    assert.equal(retained.rowCount, 10);
+    assert(retained.rowCount > 0);
     assert(retained.rows.every((row) => row.criado_por === null));
     await db.query("delete from cadastros_cte_haras where id = $1", [b]);
     assert.equal((await db.query("select id from produtos where cadastro_cte_haras_id = $1", [b])).rowCount, 0);

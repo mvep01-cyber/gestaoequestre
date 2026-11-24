@@ -36,7 +36,7 @@ export async function GET() {
       pool.query(
         `select f.id, f.cadastro_cte_haras_id, f.nome, f.cnpj_cpf, f.endereco, f.cep,
                 f.bairro, f.cidade, f.estado, f.telefone, f.nome_vendedor, f.telefone_vendedor, f.email,
-                count(p.id)::int as produtos
+                count(distinct p.codigo)::int as produtos
          from public.fornecedores f
          left join public.produtos p on p.fornecedor_id = f.id
            and p.cadastro_cte_haras_id = f.cadastro_cte_haras_id and p.tenant_id = f.tenant_id

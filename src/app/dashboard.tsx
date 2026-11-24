@@ -36,9 +36,7 @@ import { ServiceProviders, type ProviderCenter } from "./service-providers";
 import { Employees } from "./employees";
 import { Suppliers } from "./suppliers";
 import { isHttpUrl } from "@/lib/url";
-import { horseProductSlots, type HorseProductSelection } from "@/lib/horse-products";
 import { productTimeZone } from "@/lib/product-dates";
-import { HorseProducts } from "./horse-products";
 
 type HorseRecord = {
   id: string;
@@ -317,7 +315,7 @@ const sectionTitles: Record<Section, { title: string; subtitle: string }> = {
   },
   products: {
     title: "Produtos",
-    subtitle: "Consulte o cadastro e o histórico de vigência dos produtos.",
+    subtitle: "Visualize os produtos vinculados a cada fornecedor.",
   },
   suppliers: {
     title: "Fornecedores",
@@ -580,7 +578,6 @@ export function Dashboard({
   const [horseChip, setHorseChip] = useState("");
   const [horseFeeding, setHorseFeeding] = useState("");
   const [horseMonthlyFee, setHorseMonthlyFee] = useState("0");
-  const [horseProducts, setHorseProducts] = useState<HorseProductSelection | null>(null);
   const [feedback, setFeedback] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [showCycleForm, setShowCycleForm] = useState(false);
@@ -676,7 +673,6 @@ export function Dashboard({
 
   function openHorseForm(horse?: HorseRecord) {
     setFeedback("");
-    setHorseProducts(null);
     setHorseEditingId(horse?.id ?? null);
     setHorseName(horse?.nome ?? "");
     setHorseStable(horse?.baia ?? "");
@@ -716,10 +712,6 @@ export function Dashboard({
       setFeedback("Selecione um proprietário do seu cadastro ou escolha a opção sem proprietário.");
       return;
     }
-    if (!demo && !horseEditingId && (!horseProducts?.cadastroId || horseProductSlots.some((slot) => !horseProducts.ids[slot]))) {
-      setFeedback("Selecione os quatro produtos obrigatórios.");
-      return;
-    }
     setIsSaving(true);
     const fields = {
       nome: horseName.trim(),
@@ -751,7 +743,6 @@ export function Dashboard({
         const result = await postDashboardAction(horseEditingId ? "updateHorse" : "createHorse", {
           ...fields,
           ...(horseEditingId ? { id: horseEditingId } : {}),
-          ...(!horseEditingId && horseProducts ? { produto_cadastro_id: horseProducts.cadastroId, produtos: horseProducts.ids } : {}),
           tenantId: selectedTenantId,
         });
         const horse = isRecord(result) ? result.horse : null;
@@ -1991,7 +1982,9 @@ export function Dashboard({
       case "clients":
         return renderClients();
       case "products":
-        return isAdmin || isClientAccount ? <Products canCreate={isClientAccount} demo={demo} supplierFilter={supplierFilter} onClearSupplier={() => setSupplierFilter(null)} /> : renderHome();
+        return isAdmin || isClientAccount ? <Products canCreate={isClientAccount} demo={demo} centerId={providerCenterId}
+          onCentersChange={setProviderCenters} onCenterChange={setProviderCenterId}
+          supplierFilter={supplierFilter} onClearSupplier={() => setSupplierFilter(null)} /> : renderHome();
       case "suppliers":
         return isAdmin || isClientAccount ? (
           <Suppliers
@@ -2095,13 +2088,13 @@ export function Dashboard({
             <strong>Campo Vivo</strong>
           </div>
           <div className="topbar-context">
-            {(activeSection === "providers" || activeSection === "employees" || activeSection === "suppliers") && !demo && (
+            {(activeSection === "providers" || activeSection === "employees" || activeSection === "suppliers" || activeSection === "products") && !demo && (
               <label className="provider-center-selector">
                 <span>Centro</span>
                 <select
                   aria-label="Selecionar CTE ou Haras"
                   value={providerCenterId}
-                  onChange={(event) => setProviderCenterId(event.target.value)}
+                  onChange={(event) => { setProviderCenterId(event.target.value); setSupplierFilter(null); }}
                   disabled={providerCenters.length === 0}
                 >
                   {providerCenters.length === 0 && <option value="">Nenhum centro disponível</option>}
@@ -2263,7 +2256,6 @@ export function Dashboard({
               <textarea id="horse-feeding" value={horseFeeding} onChange={(event) => setHorseFeeding(event.target.value)} maxLength={1000} rows={3} />
               <label htmlFor="horse-monthly-fee">Mensalidade (R$)</label>
               <input id="horse-monthly-fee" type="number" min="0" max="9999999999.99" step="0.01" value={horseMonthlyFee} onChange={(event) => setHorseMonthlyFee(event.target.value)} />
-              {!demo && <HorseProducts operational={isOperational} horseId={horseEditingId} selection={horseProducts} onChange={setHorseProducts} onTotalChange={setHorseMonthlyFee} />}
               <div className="modal-actions">
                 <button
                   type="button"
