@@ -190,6 +190,7 @@ create table if not exists public.produtos (
   data_inicio date not null,
   data_fim date not null,
   created_at timestamptz not null default now(),
+  unique (id, tenant_id),
   foreign key (cadastro_cte_haras_id, tenant_id)
     references public.cadastros_cte_haras (id, tenant_id) on delete cascade,
   constraint produtos_fornecedor_centro_fk foreign key (fornecedor_id, cadastro_cte_haras_id, tenant_id)
@@ -209,9 +210,6 @@ begin
   end if;
   if to_regclass('public.equinos_produtos') is not null then
     execute 'lock table public.equinos_produtos in access exclusive mode';
-    if exists (select 1 from public.equinos_produtos) then
-      raise exception 'Existem vínculos de produtos com cavalos. Preserve e remova esses vínculos conscientemente antes da migração.';
-    end if;
   end if;
 end $$;
 
@@ -242,6 +240,9 @@ begin
     alter table public.produtos add constraint produtos_fornecedor_centro_fk
       foreign key (fornecedor_id, cadastro_cte_haras_id, tenant_id)
       references public.fornecedores (id, cadastro_cte_haras_id, tenant_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.produtos'::regclass and conname = 'produtos_id_tenant_key') then
+    alter table public.produtos add constraint produtos_id_tenant_key unique (id, tenant_id);
   end if;
 end $$;
 
@@ -379,8 +380,6 @@ create table if not exists public.equinos (
     references public.equinos (id, tenant_id)
 );
 
-drop table if exists public.equinos_produtos;
-
 alter table public.equinos
   add column if not exists criado_por uuid references public.usuarios (id) on delete set null,
   add column if not exists nome_pai text,
@@ -438,6 +437,94 @@ begin
   end if;
 end
 $$;
+
+create table if not exists public.equinos_produtos (
+  equino_id uuid not null,
+  produto_id uuid not null,
+  tenant_id uuid not null,
+  tipo_vinculo text not null default 'OUTRO',
+  constraint equinos_produtos_pkey primary key (equino_id, produto_id),
+  constraint equinos_produtos_tipo_check
+    check (tipo_vinculo in ('FENO', 'RACAO', 'BAIA', 'OUTRO')),
+  constraint equinos_produtos_equino_tenant_fk
+    foreign key (equino_id, tenant_id)
+    references public.equinos (id, tenant_id) on delete cascade,
+  constraint equinos_produtos_produto_tenant_fk
+    foreign key (produto_id, tenant_id)
+    references public.produtos (id, tenant_id) on delete cascade
+);
+
+alter table public.equinos_produtos
+  add column if not exists tenant_id uuid,
+  add column if not exists tipo_vinculo text not null default 'OUTRO';
+
+update public.equinos_produtos as ep
+set tenant_id = e.tenant_id
+from public.equinos as e, public.produtos as p
+where e.id = ep.equino_id
+  and p.id = ep.produto_id
+  and ep.tenant_id is null
+  and e.tenant_id = p.tenant_id;
+
+do $$
+begin
+  if exists (
+    select 1
+    from public.equinos_produtos as ep
+    left join public.equinos as e
+      on e.id = ep.equino_id and e.tenant_id = ep.tenant_id
+    left join public.produtos as p
+      on p.id = ep.produto_id and p.tenant_id = ep.tenant_id
+    where e.id is null or p.id is null
+  ) then
+    raise exception 'Existem vínculos de produtos com cavalos sem correspondência no mesmo tenant. Corrija os registros antes da migração.';
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'equinos_produtos_pkey'
+      and conrelid = 'public.equinos_produtos'::regclass
+  ) then
+    alter table public.equinos_produtos
+      add constraint equinos_produtos_pkey primary key (equino_id, produto_id);
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'equinos_produtos_tipo_check'
+      and conrelid = 'public.equinos_produtos'::regclass
+  ) then
+    alter table public.equinos_produtos
+      add constraint equinos_produtos_tipo_check
+      check (tipo_vinculo in ('FENO', 'RACAO', 'BAIA', 'OUTRO'));
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'equinos_produtos_equino_tenant_fk'
+      and conrelid = 'public.equinos_produtos'::regclass
+  ) then
+    alter table public.equinos_produtos
+      add constraint equinos_produtos_equino_tenant_fk
+      foreign key (equino_id, tenant_id)
+      references public.equinos (id, tenant_id) on delete cascade;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'equinos_produtos_produto_tenant_fk'
+      and conrelid = 'public.equinos_produtos'::regclass
+  ) then
+    alter table public.equinos_produtos
+      add constraint equinos_produtos_produto_tenant_fk
+      foreign key (produto_id, tenant_id)
+      references public.produtos (id, tenant_id) on delete cascade;
+  end if;
+end
+$$;
+
+alter table public.equinos_produtos
+  alter column tenant_id set not null;
+
+create index if not exists equinos_produtos_produto_idx
+  on public.equinos_produtos (produto_id, tenant_id);
 
 create table if not exists public.reproducao_ciclos (
   id uuid primary key default gen_random_uuid(),
@@ -644,10 +731,28 @@ create table if not exists public.contas_bancarias (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants (id) on delete cascade,
   nome text not null,
+  tipo text not null default 'OUTRO',
   chave_pix text,
   saldo_atual numeric(14, 2) not null default 0,
   unique (id, tenant_id)
 );
+
+alter table public.contas_bancarias
+  add column if not exists tipo text not null default 'OUTRO';
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'contas_bancarias_tipo_check'
+      and conrelid = 'public.contas_bancarias'::regclass
+  ) then
+    alter table public.contas_bancarias
+      add constraint contas_bancarias_tipo_check
+      check (tipo in ('CONTA_CORRENTE', 'PIX', 'DINHEIRO', 'OUTRO'));
+  end if;
+end
+$$;
 
 create table if not exists public.contratos_vendas (
   id uuid primary key default gen_random_uuid(),
@@ -697,6 +802,7 @@ create table if not exists public.financeiro_lancamentos (
   tenant_id uuid not null references public.tenants (id) on delete cascade,
  criado_por uuid,
   conta_bancaria_id uuid,
+  conta_informada text,
   equino_id uuid,
   proprietario_id uuid,
   contrato_venda_id uuid,
@@ -750,6 +856,7 @@ create table if not exists public.financeiro_lancamentos (
 
 alter table public.financeiro_lancamentos
   add column if not exists criado_por uuid,
+  add column if not exists conta_informada text,
   add column if not exists excluido_em timestamptz;
 
 do $$

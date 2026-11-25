@@ -6,7 +6,6 @@ import {
   Bell,
   Building2,
   CalendarDays,
-  Check,
   ChevronRight,
   CircleDollarSign,
   ClipboardCheck,
@@ -29,6 +28,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { signOut } from "next-auth/react";
 import { CteHarasRegistrations, type CteHarasRegistration } from "./cte-haras-registrations";
 import { AdminFinance, type AdminFinanceEntry, type AdminFinanceRegistration } from "./admin-finance";
+import { CteHarasFinance } from "./cte-haras-finance";
 import { Products } from "./products";
 import { ServiceProviders, type ProviderCenter } from "./service-providers";
 import { Employees } from "./employees";
@@ -42,6 +42,17 @@ import {
 import { isHttpUrl } from "@/lib/url";
 import { isValidCpf } from "@/lib/brazilian-documents";
 import { productTimeZone } from "@/lib/product-dates";
+
+export type HorseProductOption = {
+  id: string;
+  nome: string;
+  codigo: string;
+  fornecedor_nome: string;
+};
+
+export type HorseProductLink = HorseProductOption & {
+  tipo_vinculo: "FENO" | "RACAO" | "BAIA" | "OUTRO";
+};
 
 type HorseRecord = {
   id: string;
@@ -68,7 +79,17 @@ type HorseRecord = {
   created_at?: string | null;
   cte_haras_nome?: string | null;
   cte_haras_tipo?: "CTE" | "HARAS" | null;
+  produtos?: HorseProductLink[];
 };
+
+type HorseProductSelection = {
+  feno: string;
+  racao: string;
+  baia: string;
+  outros: string;
+};
+
+const horseProductSelectionFields = ["feno", "racao", "baia", "outros"] as const;
 
 const horseCoatTypes = [
   "Branco", "Preto", "Alazão", "Baio", "Castanha", "Tordilha", "Rosilha",
@@ -116,15 +137,22 @@ type BillingOwner = {
 type PixAccount = {
   id: string;
   nome: string;
+  tipo: string;
   chave_pix: string | null;
   saldo_atual: number;
 };
 
 type FinanceEntry = {
   id: string;
+  proprietario_id: string;
+  cliente_nome: string;
   descricao: string;
   valor: number;
+  competencia: string | null;
   data_vencimento: string;
+  data_pagamento: string | null;
+  conta_bancaria_id: string | null;
+  conta_informada: string | null;
   natureza: string;
   categoria: string;
   status: string;
@@ -199,6 +227,7 @@ type DashboardProps = {
   plan: string;
   tenantName: string;
   horses: HorseRecord[];
+  horseProductOptions?: HorseProductOption[];
   clients?: ClientRecord[];
   cteHarasRegistrations?: CteHarasRegistration[];
   medicationApplications?: MedicationApplication[];
@@ -437,6 +466,17 @@ function getHorseSexLabel(sex: string) {
   return "Não informado";
 }
 
+function getHorseCategoryLabel(category: string) {
+  switch (category) {
+    case "ATLETA": return "Atleta";
+    case "MATRIZ": return "Matriz";
+    case "GARANHAO": return "Garanhão";
+    case "POTRO": return "Potro";
+    case "RECEPTORA": return "Receptora";
+    default: return category;
+  }
+}
+
 function formatHorseDate(date: string | null) {
   if (!date) return "—";
   const [year, month, day] = date.slice(0, 10).split("-");
@@ -478,7 +518,20 @@ function isHorseRecord(value: unknown): value is HorseRecord {
     (typeof value.data_nascimento === "string" || value.data_nascimento === null) &&
     (typeof value.registro_associacao === "string" || value.registro_associacao === null) &&
     typeof value.sexo === "string" &&
-    (typeof value.pelagem === "string" || value.pelagem === null)
+    (typeof value.pelagem === "string" || value.pelagem === null) &&
+    (!("produtos" in value) ||
+      (Array.isArray(value.produtos) &&
+        value.produtos.every((product) =>
+          isRecord(product) &&
+          typeof product.id === "string" &&
+          typeof product.nome === "string" &&
+          typeof product.codigo === "string" &&
+          typeof product.fornecedor_nome === "string" &&
+          (product.tipo_vinculo === "FENO" ||
+            product.tipo_vinculo === "RACAO" ||
+            product.tipo_vinculo === "BAIA" ||
+            product.tipo_vinculo === "OUTRO"),
+        )))
   );
 }
 
@@ -645,6 +698,7 @@ export function Dashboard({
   plan,
   tenantName,
   horses: initialHorses,
+  horseProductOptions: initialHorseProductOptions = [],
   medicationApplications = [],
   todayTrainings = [],
   pendingMedicationCount = 0,
@@ -694,11 +748,9 @@ export function Dashboard({
     demo && todayTrainings.length === 0 ? demoTrainings : todayTrainings,
   );
   const [tenants, setTenants] = useState(managedTenants);
-  const [financeEntries, setFinanceEntries] = useState(initialFinanceEntries);
   const [reproductionCycles, setReproductionCycles] = useState(initialReproductionCycles);
   const [demoClients, setDemoClients] = useState(initialClients);
   const clients = demo ? demoClients : initialClients;
-  const [selectedAccounts, setSelectedAccounts] = useState<Record<string, string>>({});
   const [horseCategory, setHorseCategory] = useState("");
   const [selectedOwnerId, setSelectedOwnerId] = useState("");
   const [billingMonth, setBillingMonth] = useState("");
@@ -708,6 +760,7 @@ export function Dashboard({
   const [providerCenterId, setProviderCenterId] = useState("");
   const [supplierFilter, setSupplierFilter] = useState<{ id: string; nome: string } | null>(null);
   const [showHorseForm, setShowHorseForm] = useState(false);
+  const [selectedHorse, setSelectedHorse] = useState<HorseRecord | null>(null);
   const [horseEditingId, setHorseEditingId] = useState<string | null>(null);
   const [horseName, setHorseName] = useState("");
   const [horseStable, setHorseStable] = useState("");
@@ -727,6 +780,12 @@ export function Dashboard({
   const [horseChip, setHorseChip] = useState("");
   const [horseFeeding, setHorseFeeding] = useState("");
   const [horseMonthlyFee, setHorseMonthlyFee] = useState("0");
+  const [horseProductSelection, setHorseProductSelection] = useState<HorseProductSelection>({
+    feno: "",
+    racao: "",
+    baia: "",
+    outros: "",
+  });
   const [feedback, setFeedback] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [showCycleForm, setShowCycleForm] = useState(false);
@@ -775,13 +834,56 @@ export function Dashboard({
         !query ||
         [horse.nome, horse.baia ?? "", horse.categoria, horse.nome_pai ?? "",
           horse.nome_mae ?? "", horse.registro_associacao ?? "", horse.data_nascimento ?? "",
-          horse.sexo, horse.pelagem ?? "", ...horse.raca]
+          horse.sexo, horse.pelagem ?? "", horse.nome_proprietario ?? "",
+          horse.nome_treinador ?? "", horse.chip_resenha ?? "", ...horse.raca]
           .join(" ")
           .toLocaleLowerCase("pt-BR")
           .includes(query);
       return matchesCategory && matchesSearch;
     });
   }, [horseCategory, horses, search]);
+
+  const horseProductOptionsForForm = useMemo(() => {
+    const options = [...initialHorseProductOptions];
+    const currentHorse = horses.find((horse) => horse.id === horseEditingId);
+    for (const product of currentHorse?.produtos ?? []) {
+      if (!options.some((option) => option.id === product.id)) {
+        options.push(product);
+      }
+    }
+    return options;
+  }, [horseEditingId, horses, initialHorseProductOptions]);
+
+  function getHorseProductChoices(field: keyof HorseProductSelection) {
+    const selectedId = horseProductSelection[field];
+    const searchTerm = field === "feno" ? "feno" : field === "racao" ? "racao" : field === "baia" ? "baia" : "";
+    const selectedElsewhere = new Set(
+      Object.entries(horseProductSelection)
+        .filter(([otherField, id]) => otherField !== field && id)
+        .map(([, id]) => id),
+    );
+    return horseProductOptionsForForm.filter((product) => {
+      if (product.id === selectedId) return true;
+      if (selectedElsewhere.has(product.id)) return false;
+      if (!searchTerm) return true;
+      const normalizedName = product.nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
+      return normalizedName.includes(searchTerm);
+    });
+  }
+
+  function updateHorseProductSelection(field: keyof HorseProductSelection, productId: string) {
+    setHorseProductSelection((current) => {
+      const next = { ...current, [field]: productId };
+      if (productId) {
+        for (const otherField of horseProductSelectionFields) {
+          if (otherField !== field && next[otherField] === productId) {
+            next[otherField] = "";
+          }
+        }
+      }
+      return next;
+    });
+  }
 
   const filteredClients = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("pt-BR");
@@ -847,6 +949,13 @@ export function Dashboard({
     setHorseChip(horse?.chip_resenha ?? "");
     setHorseFeeding(horse?.alimentacao_diaria ?? "");
     setHorseMonthlyFee(String(horse?.valor_mensalidade ?? 0));
+    const productsByType = new Map((horse?.produtos ?? []).map((product) => [product.tipo_vinculo, product.id]));
+    setHorseProductSelection({
+      feno: productsByType.get("FENO") ?? "",
+      racao: productsByType.get("RACAO") ?? "",
+      baia: productsByType.get("BAIA") ?? "",
+      outros: productsByType.get("OUTRO") ?? "",
+    });
     setShowHorseForm(true);
   }
 
@@ -884,6 +993,12 @@ export function Dashboard({
       alimentacao_diaria: horseFeeding.trim() || null,
       valor_mensalidade: horseMonthlyFee.trim() ? Number(horseMonthlyFee) : 0,
     };
+    const produtos = {
+      feno: horseProductSelection.feno || null,
+      racao: horseProductSelection.racao || null,
+      baia: horseProductSelection.baia || null,
+      outros: horseProductSelection.outros || null,
+    };
 
     try {
       if (demo) {
@@ -893,6 +1008,7 @@ export function Dashboard({
       } else {
         const result = await postDashboardAction(horseEditingId ? "updateHorse" : "createHorse", {
           ...fields,
+          produtos,
           ...(horseEditingId ? { id: horseEditingId } : {}),
           tenantId: selectedTenantId,
         });
@@ -1078,26 +1194,6 @@ export function Dashboard({
       console.error("Falha ao gerar a cobrança consolidada:", error);
       setFeedback(
         error instanceof Error ? error.message : "Não foi possível gerar a cobrança.",
-      );
-    }
-  }
-
-  async function markFinanceEntryPaid(entryId: string) {
-    const accountId = selectedAccounts[entryId];
-    if (!accountId) {
-      setFeedback("Selecione a conta bancária antes de dar baixa.");
-      return;
-    }
-
-    try {
-      await postDashboardAction("payFinanceEntry", { id: entryId, accountId });
-      setFinanceEntries((current) => current.filter((entry) => entry.id !== entryId));
-      setFeedback("Pagamento registrado e saldo atualizado.");
-      router.refresh();
-    } catch (error) {
-      console.error("Falha ao dar baixa no lançamento:", error);
-      setFeedback(
-        error instanceof Error ? error.message : "Não foi possível registrar o pagamento.",
       );
     }
   }
@@ -1623,28 +1719,20 @@ export function Dashboard({
                   {isAdmin && <th scope="col">CTE/Haras que cadastrou</th>}
                   <th scope="col">Proprietário</th>
                   <th scope="col">Treinador</th>
-                  <th scope="col">Nome do pai</th>
-                  <th scope="col">Nome da mãe</th>
-                  <th scope="col">Nascimento</th>
-                  <th scope="col">Registro ABCCMM</th>
-                  <th scope="col">Sexo</th>
-                  <th scope="col">Pelagem</th>
                   <th scope="col">Raça</th>
                   <th scope="col">Baia</th>
                   <th scope="col">Categoria</th>
                   <th scope="col">Situação</th>
-                  <th scope="col">Chip/Resenha</th>
-                  <th scope="col">Alimentação diária</th>
-                  <th scope="col">Mensalidade</th>
-                  <th scope="col">Foto (URL)</th>
-                  <th scope="col">Cadastro</th>
-                  {canManageHorses && <th scope="col">Ações</th>}
+                  <th scope="col">Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredHorses.map((horse) => (
                   <tr key={horse.id}>
-                    <td>{horse.nome}</td>
+                    <td>
+                      <strong>{horse.nome}</strong>
+                      {horse.registro_associacao && <small className="horse-table-secondary">Registro: {horse.registro_associacao}</small>}
+                    </td>
                     {isAdmin && (
                       <td>
                         {horse.cte_haras_nome
@@ -1654,15 +1742,9 @@ export function Dashboard({
                     )}
                     <td>{horse.nome_proprietario || "—"}</td>
                     <td>{horse.nome_treinador || "—"}</td>
-                    <td>{horse.nome_pai || "—"}</td>
-                    <td>{horse.nome_mae || "—"}</td>
-                    <td>{formatHorseDate(horse.data_nascimento)}</td>
-                    <td>{horse.registro_associacao || "—"}</td>
-                    <td>{getHorseSexLabel(horse.sexo)}</td>
-                    <td>{horse.pelagem || "—"}</td>
                     <td>{horse.raca.join(", ") || "—"}</td>
                     <td>{horse.baia || "—"}</td>
-                    <td>{horse.categoria}</td>
+                    <td>{getHorseCategoryLabel(horse.categoria)}</td>
                     <td>
                       {horse.categoria === "RECEPTORA" ? (
                         <span className={`status-pill ${isRecipientAvailable(horse) ? "" : "status-descanso"}`}>
@@ -1672,19 +1754,13 @@ export function Dashboard({
                         <span className={`status-pill status-${horse.status.toLowerCase()}`}>{getStatusLabel(horse.status)}</span>
                       )}
                     </td>
-                    <td>{horse.chip_resenha || "—"}</td>
-                    <td>{horse.alimentacao_diaria || "—"}</td>
-                    <td>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(horse.valor_mensalidade ?? 0)}</td>
-                    <td>{horse.foto_url && isHttpUrl(horse.foto_url)
-                      ? <a href={horse.foto_url} target="_blank" rel="noopener noreferrer">{horse.foto_url}</a>
-                      : horse.foto_url || "—"}</td>
-                    <td>{formatHorseRegistrationDate(horse.created_at ?? null)}</td>
-                    {canManageHorses && (
-                      <td><div className="client-row-actions">
-                        <button className="button button-secondary" disabled={isSaving} onClick={() => openHorseForm(horse)}>Alterar</button>
-                        <button className="button button-quiet" disabled={isSaving} onClick={() => void handleDeleteHorse(horse)}>Excluir</button>
-                      </div></td>
-                    )}
+                    <td><div className="horse-row-actions">
+                      <button type="button" className="button button-secondary provider-small-button" disabled={isSaving} onClick={() => setSelectedHorse(horse)}>Visualizar</button>
+                      {canManageHorses && <>
+                        <button type="button" className="button button-quiet provider-small-button" disabled={isSaving} onClick={() => openHorseForm(horse)}>Alterar</button>
+                        <button type="button" className="button button-quiet provider-small-button" disabled={isSaving} onClick={() => void handleDeleteHorse(horse)}>Excluir</button>
+                      </>}
+                    </div></td>
                   </tr>
                 ))}
               </tbody>
@@ -2429,92 +2505,15 @@ export function Dashboard({
 
   function renderFinance() {
     return (
-      <div className="module-grid">
-        <section className="panel finance-summary">
-          <span className="module-badge"><Wallet size={22} /></span>
-          <span className="eyebrow">A receber</span>
-          <strong className="finance-number">{financeCount}</strong>
-          <p>lançamentos pendentes</p>
-          <div className="finance-note">
-            <CircleDollarSign size={19} />
-            <span>Mensalidades, extras e despesas ficam disponíveis somente para gestores.</span>
-          </div>
-          {pixAccounts.length > 0 && (
-            <div className="account-balances">
-              <strong>Contas</strong>
-              {pixAccounts.map((account) => (
-                <div key={account.id}>
-                  <span>{account.nome}</span>
-                  <b>
-                    {new Intl.NumberFormat("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    }).format(Number(account.saldo_atual))}
-                  </b>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+      <div className="finance-page">
+        <CteHarasFinance
+          demo={demo}
+          entries={initialFinanceEntries}
+          accounts={pixAccounts}
+          clients={clients.map((client) => ({ id: client.id, nome: client.nome }))}
+          action={postDashboardAction}
+        />
         <section className="panel module-panel finance-list-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="eyebrow">Contas a receber e pagar</span>
-              <h2>Lançamentos em aberto</h2>
-            </div>
-            <span className="module-badge"><CircleDollarSign size={20} /></span>
-          </div>
-          {financeEntries.length === 0 ? (
-            <div className="empty-state compact">Nenhum lançamento em aberto.</div>
-          ) : (
-            <div className="finance-entry-list">
-              {financeEntries.map((entry) => (
-                <article className="finance-entry" key={entry.id}>
-                  <div className="finance-entry-info">
-                    <strong>{entry.descricao}</strong>
-                    <span>
-                      {entry.natureza === "RECEITA" ? "Receita" : "Despesa"} · Vence{" "}
-                      {new Intl.DateTimeFormat("pt-BR", {
-                        timeZone: "America/Sao_Paulo",
-                      }).format(new Date(`${entry.data_vencimento}T12:00:00`))}
-                    </span>
-                  </div>
-                  <b className={entry.natureza === "DESPESA" ? "expense-amount" : ""}>
-                    {new Intl.NumberFormat("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    }).format(Number(entry.valor))}
-                  </b>
-                  <div className="finance-entry-actions">
-                    <label>
-                      <span className="sr-only">Conta bancária de {entry.descricao}</span>
-                      <select
-                        value={selectedAccounts[entry.id] ?? ""}
-                        onChange={(event) =>
-                          setSelectedAccounts((current) => ({
-                            ...current,
-                            [entry.id]: event.target.value,
-                          }))
-                        }
-                      >
-                        <option value="">Conta para baixa</option>
-                        {pixAccounts.map((account) => (
-                          <option value={account.id} key={account.id}>{account.nome}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <button
-                      className="button button-complete"
-                      disabled={pixAccounts.length === 0}
-                      onClick={() => void markFinanceEntryPaid(entry.id)}
-                    >
-                      <Check size={17} /> Baixar
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
           <div className="finance-billing">
             <span className="eyebrow">Cobrança consolidada</span>
             <h3>Uma cobrança por proprietário</h3>
@@ -2939,7 +2938,7 @@ export function Dashboard({
           if (event.target === event.currentTarget && !isSaving) closeHorseForm();
         }}>
           <section
-            className="modal-card"
+            className="modal-card horse-modal-card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="horse-form-title"
@@ -2959,81 +2958,131 @@ export function Dashboard({
               </button>
             </div>
             <form className="horse-form" onSubmit={(event) => void handleSaveHorse(event)}>
-              {feedback && <p className="feedback-message" role="alert">{feedback}</p>}
-              <label htmlFor="horse-name">Nome do animal</label>
-              <input
-                id="horse-name"
-                autoFocus
-                required
-                value={horseName}
-                onChange={(event) => setHorseName(event.target.value)}
-                maxLength={120}
-                placeholder="Ex.: Estrela do Campo"
-              />
-              <label htmlFor="horse-photo">URL da foto (opcional)</label>
-              <input id="horse-photo" type="url" value={horsePhotoUrl} onChange={(event) => setHorsePhotoUrl(event.target.value)} maxLength={2000} placeholder="https://..." />
-              <label htmlFor="horse-owner">Proprietário (opcional)</label>
-              {isClientAccount ? (
-                <select id="horse-owner" value={horseOwnerId} onChange={(event) => setHorseOwnerId(event.target.value)}>
-                  {horseOwnerId === "unavailable" && <option value="unavailable" disabled>Selecione novamente o proprietário</option>}
-                  <option value="">Sem proprietário selecionado</option>
-                  {clients.map((client) => <option key={client.id} value={client.id}>{client.nome}</option>)}
+              {feedback && <p className="feedback-message horse-form-full" role="alert">{feedback}</p>}
+              <div className="horse-field">
+                <label htmlFor="horse-name">Nome do animal</label>
+                <input id="horse-name" autoFocus required value={horseName} onChange={(event) => setHorseName(event.target.value)} maxLength={120} placeholder="Ex.: Estrela do Campo" />
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-photo">URL da foto (opcional)</label>
+                <input id="horse-photo" type="url" value={horsePhotoUrl} onChange={(event) => setHorsePhotoUrl(event.target.value)} maxLength={2000} placeholder="https://..." />
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-owner">Proprietário (opcional)</label>
+                {isClientAccount ? (
+                  <select id="horse-owner" value={horseOwnerId} onChange={(event) => setHorseOwnerId(event.target.value)}>
+                    {horseOwnerId === "unavailable" && <option value="unavailable" disabled>Selecione novamente o proprietário</option>}
+                    <option value="">Sem proprietário selecionado</option>
+                    {clients.map((client) => <option key={client.id} value={client.id}>{client.nome}</option>)}
+                  </select>
+                ) : (
+                  <input id="horse-owner" value={horseOwnerName} onChange={(event) => setHorseOwnerName(event.target.value)} maxLength={120} placeholder="Digite o nome do proprietário" />
+                )}
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-trainer">Treinador (opcional)</label>
+                <input id="horse-trainer" value={horseTrainerName} onChange={(event) => setHorseTrainerName(event.target.value)} maxLength={120} placeholder="Digite o nome do treinador" />
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-breeds">Raça(s), separadas por vírgula</label>
+                <input id="horse-breeds" value={horseBreeds} onChange={(event) => setHorseBreeds(event.target.value)} maxLength={500} placeholder="Ex.: Mangalarga Marchador" />
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-category">Categoria</label>
+                <select id="horse-category" value={horseFormCategory} onChange={(event) => setHorseFormCategory(event.target.value)}>
+                  <option value="ATLETA">Atleta</option>
+                  <option value="MATRIZ">Matriz</option>
+                  <option value="GARANHAO">Garanhão</option>
+                  <option value="POTRO">Potro</option>
+                  <option value="RECEPTORA">Receptora</option>
                 </select>
-              ) : (
-                <input id="horse-owner" value={horseOwnerName} onChange={(event) => setHorseOwnerName(event.target.value)} maxLength={120} placeholder="Digite o nome do proprietário" />
-              )}
-              <label htmlFor="horse-trainer">Treinador (opcional)</label>
-              <input id="horse-trainer" value={horseTrainerName} onChange={(event) => setHorseTrainerName(event.target.value)} maxLength={120} placeholder="Digite o nome do treinador" />
-              <label htmlFor="horse-breeds">Raça(s), separadas por vírgula (opcional)</label>
-              <input id="horse-breeds" value={horseBreeds} onChange={(event) => setHorseBreeds(event.target.value)} maxLength={500} placeholder="Ex.: Mangalarga Marchador" />
-              <label htmlFor="horse-category">Categoria</label>
-              <select id="horse-category" value={horseFormCategory} onChange={(event) => setHorseFormCategory(event.target.value)}>
-                <option value="ATLETA">Atleta</option>
-                <option value="MATRIZ">Matriz</option>
-                <option value="GARANHAO">Garanhão</option>
-                <option value="POTRO">Potro</option>
-                <option value="RECEPTORA">Receptora</option>
-              </select>
-              <label htmlFor="horse-status">Status</label>
-              <select id="horse-status" value={horseStatus} onChange={(event) => setHorseStatus(event.target.value)}>
-                <option value="EM_TREINO">Em treino</option>
-                <option value="EM_TRATAMENTO">Em tratamento</option>
-                <option value="DESCANSO">Descanso</option>
-              </select>
-              <label htmlFor="horse-father">Nome do pai (opcional)</label>
-              <input id="horse-father" value={horseFather} onChange={(event) => setHorseFather(event.target.value)} maxLength={120} placeholder="Digite o nome do pai" />
-              <label htmlFor="horse-mother">Nome da mãe (opcional)</label>
-              <input id="horse-mother" value={horseMother} onChange={(event) => setHorseMother(event.target.value)} maxLength={120} placeholder="Digite o nome da mãe" />
-              <label htmlFor="horse-birth-date">Data de nascimento (opcional)</label>
-              <input id="horse-birth-date" type="date" value={horseBirthDate} onChange={(event) => setHorseBirthDate(event.target.value)} />
-              <label htmlFor="horse-registration">Número de registro ABCCMM (opcional)</label>
-              <input id="horse-registration" value={horseRegistration} onChange={(event) => setHorseRegistration(event.target.value)} maxLength={80} />
-              <label htmlFor="horse-sex">Sexo</label>
-              <select id="horse-sex" value={horseSex} onChange={(event) => setHorseSex(event.target.value)}>
-                <option value="INDEFINIDO">Não informado</option>
-                <option value="MACHO">Macho</option>
-                <option value="FEMEA">Fêmea</option>
-              </select>
-              <label htmlFor="horse-coat">Pelagem (opcional)</label>
-              <select id="horse-coat" value={horseCoat} onChange={(event) => setHorseCoat(event.target.value)}>
-                <option value="">Selecione</option>
-                {horseCoatTypes.map((coat) => <option key={coat} value={coat}>{coat}</option>)}
-              </select>
-              <label htmlFor="horse-stable">Baia (opcional)</label>
-              <input
-                id="horse-stable"
-                value={horseStable}
-                onChange={(event) => setHorseStable(event.target.value)}
-                maxLength={40}
-                placeholder="Ex.: 04"
-              />
-              <label htmlFor="horse-chip">Chip / resenha (opcional)</label>
-              <input id="horse-chip" value={horseChip} onChange={(event) => setHorseChip(event.target.value)} maxLength={120} />
-              <label htmlFor="horse-feeding">Alimentação diária (opcional)</label>
-              <textarea id="horse-feeding" value={horseFeeding} onChange={(event) => setHorseFeeding(event.target.value)} maxLength={1000} rows={3} />
-              <label htmlFor="horse-monthly-fee">Mensalidade (R$)</label>
-              <input id="horse-monthly-fee" type="number" min="0" max="9999999999.99" step="0.01" value={horseMonthlyFee} onChange={(event) => setHorseMonthlyFee(event.target.value)} />
-              <div className="modal-actions">
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-status">Situação</label>
+                <select id="horse-status" value={horseStatus} onChange={(event) => setHorseStatus(event.target.value)}>
+                  <option value="EM_TREINO">Em treino</option>
+                  <option value="EM_TRATAMENTO">Em tratamento</option>
+                  <option value="DESCANSO">Descanso</option>
+                </select>
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-father">Nome do pai (opcional)</label>
+                <input id="horse-father" value={horseFather} onChange={(event) => setHorseFather(event.target.value)} maxLength={120} placeholder="Digite o nome do pai" />
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-mother">Nome da mãe (opcional)</label>
+                <input id="horse-mother" value={horseMother} onChange={(event) => setHorseMother(event.target.value)} maxLength={120} placeholder="Digite o nome da mãe" />
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-birth-date">Data de nascimento (opcional)</label>
+                <input id="horse-birth-date" type="date" value={horseBirthDate} onChange={(event) => setHorseBirthDate(event.target.value)} />
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-registration">Registro ABCCMM (opcional)</label>
+                <input id="horse-registration" value={horseRegistration} onChange={(event) => setHorseRegistration(event.target.value)} maxLength={80} />
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-sex">Sexo</label>
+                <select id="horse-sex" value={horseSex} onChange={(event) => setHorseSex(event.target.value)}>
+                  <option value="INDEFINIDO">Não informado</option>
+                  <option value="MACHO">Macho</option>
+                  <option value="FEMEA">Fêmea</option>
+                </select>
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-coat">Pelagem (opcional)</label>
+                <select id="horse-coat" value={horseCoat} onChange={(event) => setHorseCoat(event.target.value)}>
+                  <option value="">Selecione</option>
+                  {horseCoatTypes.map((coat) => <option key={coat} value={coat}>{coat}</option>)}
+                </select>
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-stable">Baia (opcional)</label>
+                <input id="horse-stable" value={horseStable} onChange={(event) => setHorseStable(event.target.value)} maxLength={40} placeholder="Ex.: 04" />
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-chip">Chip / resenha (opcional)</label>
+                <input id="horse-chip" value={horseChip} onChange={(event) => setHorseChip(event.target.value)} maxLength={120} />
+              </div>
+              <div className="horse-field horse-form-full">
+                <label htmlFor="horse-feeding">Alimentação diária (opcional)</label>
+                <textarea id="horse-feeding" value={horseFeeding} onChange={(event) => setHorseFeeding(event.target.value)} maxLength={1000} rows={3} />
+              </div>
+              <div className="horse-field">
+                <label htmlFor="horse-monthly-fee">Mensalidade (R$)</label>
+                <input id="horse-monthly-fee" type="number" min="0" max="9999999999.99" step="0.01" value={horseMonthlyFee} onChange={(event) => setHorseMonthlyFee(event.target.value)} />
+              </div>
+              <fieldset className="horse-product-section horse-form-full">
+                <legend>Produtos do fornecedor</legend>
+                {horseProductSelectionFields.map((field) => {
+                  const label = field === "feno" ? "Feno — produto do fornecedor"
+                    : field === "racao" ? "Ração — produto do fornecedor"
+                      : field === "baia" ? "Baia — produto do fornecedor"
+                        : "Outros produtos";
+                  const id = `horse-product-${field}`;
+                  return (
+                    <div className="horse-field" key={field}>
+                      <label htmlFor={id}>{label}</label>
+                      <select id={id} disabled={!isClientAccount || demo} value={horseProductSelection[field]} onChange={(event) => updateHorseProductSelection(field, event.target.value)}>
+                        <option value="">Não vinculado</option>
+                        {getHorseProductChoices(field).map((product) => (
+                          <option key={product.id} value={product.id}>{product.nome} · {product.codigo} · {product.fornecedor_nome}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+                <p className="horse-product-note">
+                  {demo
+                    ? "Os vínculos de produtos exigem conexão com o banco de dados."
+                    : !isClientAccount
+                      ? "Os vínculos existentes são preservados; somente o CTE/Haras pode alterar produtos."
+                      : horseProductOptionsForForm.length === 0
+                        ? "Cadastre produtos na tela de produtos para vinculá-los ao cavalo."
+                        : "Cada produto deve pertencer ao mesmo CTE/Haras e estar vigente."}
+                </p>
+              </fieldset>
+              <div className="modal-actions horse-form-full">
                 <button
                   type="button"
                   className="button button-quiet"
@@ -3047,6 +3096,64 @@ export function Dashboard({
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {selectedHorse && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setSelectedHorse(null);
+        }}>
+          <section className="modal-card horse-detail-modal" role="dialog" aria-modal="true" aria-labelledby="horse-detail-title">
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">Cadastro de cavalo</span>
+                <h2 id="horse-detail-title">{selectedHorse.nome}</h2>
+              </div>
+              <button type="button" className="icon-button" aria-label="Fechar" onClick={() => setSelectedHorse(null)}>
+                <X size={22} />
+              </button>
+            </div>
+            <div className="horse-detail-grid">
+              <div><span>Proprietário</span><strong>{selectedHorse.nome_proprietario || "—"}</strong></div>
+              <div><span>Treinador</span><strong>{selectedHorse.nome_treinador || "—"}</strong></div>
+              <div><span>Raça(s)</span><strong>{selectedHorse.raca.join(", ") || "—"}</strong></div>
+              <div><span>Baia</span><strong>{selectedHorse.baia || "—"}</strong></div>
+              <div><span>Categoria</span><strong>{getHorseCategoryLabel(selectedHorse.categoria)}</strong></div>
+              <div><span>Situação</span><strong>{selectedHorse.categoria === "RECEPTORA"
+                ? (isRecipientAvailable(selectedHorse) ? "Disponível" : "Indisponível")
+                : getStatusLabel(selectedHorse.status)}</strong></div>
+              <div><span>Nome do pai</span><strong>{selectedHorse.nome_pai || "—"}</strong></div>
+              <div><span>Nome da mãe</span><strong>{selectedHorse.nome_mae || "—"}</strong></div>
+              <div><span>Nascimento</span><strong>{formatHorseDate(selectedHorse.data_nascimento)}</strong></div>
+              <div><span>Registro ABCCMM</span><strong>{selectedHorse.registro_associacao || "—"}</strong></div>
+              <div><span>Sexo</span><strong>{getHorseSexLabel(selectedHorse.sexo)}</strong></div>
+              <div><span>Pelagem</span><strong>{selectedHorse.pelagem || "—"}</strong></div>
+              <div><span>Chip / resenha</span><strong>{selectedHorse.chip_resenha || "—"}</strong></div>
+              <div><span>Mensalidade</span><strong>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(selectedHorse.valor_mensalidade ?? 0)}</strong></div>
+              <div><span>Cadastro</span><strong>{formatHorseRegistrationDate(selectedHorse.created_at ?? null)}</strong></div>
+              <div className="horse-detail-full"><span>Alimentação diária</span><strong>{selectedHorse.alimentacao_diaria || "—"}</strong></div>
+              <div className="horse-detail-full"><span>Foto</span><strong>{selectedHorse.foto_url && isHttpUrl(selectedHorse.foto_url)
+                ? <a href={selectedHorse.foto_url} target="_blank" rel="noopener noreferrer">Abrir foto em nova aba</a>
+                : "—"}</strong></div>
+              {isAdmin && <div><span>CTE/Haras responsável</span><strong>{selectedHorse.cte_haras_nome
+                ? `${selectedHorse.cte_haras_tipo === "CTE" ? "CTE" : "Haras"} — ${selectedHorse.cte_haras_nome}`
+                : "Sem vínculo CTE/Haras"}</strong></div>}
+              <div className="horse-detail-full">
+                <span>Produtos vinculados</span>
+                <strong>{selectedHorse.produtos?.length
+                  ? selectedHorse.produtos.map((product) => `${product.nome} — ${product.fornecedor_nome}`).join("; ")
+                  : "Nenhum produto vinculado"}</strong>
+              </div>
+            </div>
+            <div className="modal-actions">
+              {canManageHorses && <button type="button" className="button button-secondary" disabled={isSaving} onClick={() => {
+                const horse = selectedHorse;
+                setSelectedHorse(null);
+                openHorseForm(horse);
+              }}>Alterar</button>}
+              <button type="button" className="button button-quiet" onClick={() => setSelectedHorse(null)}>Fechar</button>
+            </div>
           </section>
         </div>
       )}

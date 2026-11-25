@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
-import { Dashboard } from "@/app/dashboard";
+import { Dashboard, type HorseProductLink, type HorseProductOption } from "@/app/dashboard";
 import type { AdminFinanceEntry, AdminFinanceRegistration } from "@/app/admin-finance";
 import type { TrainingRecord, TreatmentRecord } from "@/app/care-schedule";
 import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
+import { productTodaySql } from "@/lib/product-dates";
 import {
   getAdminFinancePool,
   getPool,
@@ -35,7 +36,24 @@ type HorseRecord = {
   created_at?: string | null;
   cte_haras_nome?: string | null;
   cte_haras_tipo?: "CTE" | "HARAS" | null;
+  produtos?: HorseProductLink[];
 };
+
+const horseProductAggregation = `
+  coalesce((
+    select json_agg(json_build_object(
+      'id', p.id, 'tipo_vinculo', ep.tipo_vinculo, 'nome', p.nome,
+      'codigo', p.codigo, 'fornecedor_nome', f.nome
+    ) order by ep.tipo_vinculo)
+    from public.equinos_produtos as ep
+    join public.produtos as p
+      on p.id = ep.produto_id and p.tenant_id = ep.tenant_id
+    join public.fornecedores as f
+      on f.id = p.fornecedor_id
+       and f.cadastro_cte_haras_id = p.cadastro_cte_haras_id
+       and f.tenant_id = p.tenant_id
+    where ep.equino_id = e.id and ep.tenant_id = e.tenant_id
+  ), '[]'::json) as produtos`;
 
 type MedicationApplication = {
   id: string;
@@ -85,23 +103,25 @@ type CteHarasRegistration = BillingOwner & {
 type PixAccount = {
   id: string;
   nome: string;
+  tipo: string;
   chave_pix: string | null;
   saldo_atual: number;
 };
 
 type FinanceEntry = {
   id: string;
+  proprietario_id: string;
+  cliente_nome: string;
   descricao: string;
   valor: number;
+  competencia: string | null;
   data_vencimento: string;
+  data_pagamento: string | null;
+  conta_bancaria_id: string | null;
+  conta_informada: string | null;
   natureza: string;
   categoria: string;
   status: string;
-  proprietario_id?: string | null;
-  cliente_nome?: string | null;
-  tenant_id?: string | null;
-  tenant_nome?: string | null;
-  plano?: string | null;
 };
 
 type ReproductionCycle = {
@@ -365,6 +385,7 @@ export default async function DashboardPage({
 
     const [
       horseResult,
+      horseProductOptionsResult,
       clientResult,
       accountResult,
       financeCountResult,
@@ -379,12 +400,26 @@ export default async function DashboardPage({
                   e.nome_proprietario, e.nome_treinador,
                   e.chip_resenha, e.alimentacao_diaria,
                   e.valor_mensalidade::double precision as valor_mensalidade,
-                  e.created_at::text as created_at
+                  e.created_at::text as created_at,
+                  ${horseProductAggregation}
            from public.equinos as e
            where e.tenant_id = $1 and e.criado_por = $2 and e.excluido_em is null
            order by e.nome
            limit 100`,
         [user.tenant_id, user.id],
+      ),
+      pool.query<HorseProductOption>(
+        `select p.id, p.nome, p.codigo, f.nome as fornecedor_nome
+         from public.produtos as p
+         join public.fornecedores as f
+           on f.id = p.fornecedor_id
+          and f.cadastro_cte_haras_id = p.cadastro_cte_haras_id
+          and f.tenant_id = p.tenant_id
+         where p.tenant_id = $1 and p.cadastro_cte_haras_id = $2
+           and p.data_inicio <= ${productTodaySql}
+           and p.data_fim >= ${productTodaySql}
+         order by p.nome, p.codigo`,
+        [user.tenant_id, user.cadastro_cte_haras_id],
       ),
       pool.query<BillingOwner>(
         `select id, nome, telefone_whatsapp, documento, cpf, rg,
@@ -397,7 +432,7 @@ export default async function DashboardPage({
         [user.tenant_id, user.id],
       ),
       pool.query<PixAccount>(
-        `select id, nome, chave_pix, saldo_atual::double precision as saldo_atual
+        `select id, nome, tipo, chave_pix, saldo_atual::double precision as saldo_atual
          from public.contas_bancarias
          where tenant_id = $1
          order by nome`,
@@ -412,9 +447,10 @@ export default async function DashboardPage({
       ),
       pool.query<FinanceEntry>(
         `select f.id, f.proprietario_id, p.nome as cliente_nome,
-               f.descricao, f.valor::double precision as valor,
+                f.descricao, f.valor::double precision as valor,
                 f.data_vencimento::text as data_vencimento,
-               f.competencia::text as competencia, f.natureza, f.categoria, f.status,
+                f.competencia::text as competencia, f.data_pagamento::text as data_pagamento,
+                f.conta_bancaria_id, f.conta_informada, f.natureza, f.categoria, f.status,
                comprovante.id as comprovante_id,
                comprovante.nome_original as comprovante_nome
          from public.financeiro_lancamentos as f
@@ -443,6 +479,7 @@ export default async function DashboardPage({
         plan={tenantPlan}
         tenantName={tenantName}
         horses={horseResult.rows}
+        horseProductOptions={horseProductOptionsResult.rows}
         clients={clientResult.rows.map((client) => ({
           ...client,
           numero_socio_abccmm:
@@ -555,7 +592,8 @@ export default async function DashboardPage({
               e.chip_resenha, e.alimentacao_diaria,
               e.valor_mensalidade::double precision as valor_mensalidade,
               e.created_at::text as created_at,
-              c.nome as cte_haras_nome, c.tipo_cadastro as cte_haras_tipo
+              c.nome as cte_haras_nome, c.tipo_cadastro as cte_haras_tipo,
+              ${horseProductAggregation}
        from public.equinos as e
        left join public.usuarios as creator
          on $2::boolean and creator.id = e.criado_por and creator.tenant_id = e.tenant_id
@@ -642,7 +680,7 @@ export default async function DashboardPage({
     isManager
       ? adminFinancePool
         ? adminFinancePool.query<PixAccount>(
-            `select id, nome, chave_pix, saldo_atual::double precision as saldo_atual
+            `select id, nome, tipo, chave_pix, saldo_atual::double precision as saldo_atual
              from public.contas_financeiro_admin
              where ativo
              order by nome`,
@@ -823,10 +861,7 @@ export default async function DashboardPage({
         ...row,
         saldo_atual: Number(row.saldo_atual),
       }))}
-      financeEntries={financeResult.rows.map((row) => ({
-        ...row,
-        valor: Number(row.valor),
-      }))}
+      financeEntries={[]}
       reproductionCycles={cyclesResult.rows}
       treatments={treatmentsResult.rows}
       trainingPlans={trainingPlansResult.rows}

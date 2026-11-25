@@ -1,9 +1,11 @@
 import { getCurrentUser, isTenantAvailable } from "@/lib/current-user";
 import { isValidCpf } from "@/lib/brazilian-documents";
 import { getPool } from "@/lib/db";
+import { productTodaySql } from "@/lib/product-dates";
 import { isSameOrigin } from "@/lib/request-security";
 import { isHttpUrl } from "@/lib/url";
 import { hash } from "bcryptjs";
+import type { PoolClient } from "pg";
 
 type ReproductionCycle = {
   id: string;
@@ -51,6 +53,7 @@ const clientAccountActions = new Set([
   "deleteHorse",
   "createClient",
   "updateClient",
+  "createFinanceAccount",
   "createFinanceEntry",
   "updateFinanceEntry",
   "deleteFinanceEntry",
@@ -70,6 +73,7 @@ const financeCategories = new Set([
   "ALIMENTACAO_FENO",
   "OPERACIONAL",
 ]);
+const financeAccountTypes = new Set(["CONTA_CORRENTE", "PIX", "DINHEIRO", "OUTRO"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -279,7 +283,58 @@ type HorseInput = {
   chip_resenha: string | null;
   alimentacao_diaria: string | null;
   valor_mensalidade: number;
+  produtos?: HorseProductSelection;
 };
+
+type HorseProductSelection = {
+  feno: string | null;
+  racao: string | null;
+  baia: string | null;
+  outros: string | null;
+};
+
+const horseProductFields = ["feno", "racao", "baia", "outros"] as const;
+const horseProductFieldSet = new Set<string>(horseProductFields);
+const horseProductTypes = {
+  feno: "FENO",
+  racao: "RACAO",
+  baia: "BAIA",
+  outros: "OUTRO",
+} as const;
+const emptyHorseProductSelection: HorseProductSelection = {
+  feno: null,
+  racao: null,
+  baia: null,
+  outros: null,
+};
+
+function parseHorseProductSelection(value: unknown): HorseProductSelection | undefined | null {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || horseProductFields.some((field) => !(field in value)) ||
+      Object.keys(value).some((field) => !horseProductFieldSet.has(field))) {
+    return null;
+  }
+  const parsed: HorseProductSelection = {
+    feno: null,
+    racao: null,
+    baia: null,
+    outros: null,
+  };
+  for (const field of horseProductFields) {
+    const productId = value[field];
+    if (productId === null || productId === "") {
+      parsed[field] = null;
+    } else if (isUuid(productId)) {
+      parsed[field] = productId;
+    } else {
+      return null;
+    }
+  }
+  const selectedIds = horseProductFields
+    .map((field) => parsed[field])
+    .filter((id): id is string => id !== null);
+  return new Set(selectedIds).size === selectedIds.length ? parsed : null;
+}
 
 function parseHorseInput(body: Record<string, unknown>): HorseInput | null {
   const nome = typeof body.nome === "string" ? body.nome.trim() : "";
@@ -301,6 +356,7 @@ function parseHorseInput(body: Record<string, unknown>): HorseInput | null {
   const alimentacao = parseOptionalText(body.alimentacao_diaria, 1000);
   const mensalidade = parseOptionalDecimal(body.valor_mensalidade);
   const dataNascimento = parseOptionalDate(body.data_nascimento);
+  const produtos = parseHorseProductSelection(body.produtos);
   const sexo = body.sexo === undefined ? "INDEFINIDO" : body.sexo;
   const pelagem = parseOptionalText(body.pelagem, 40);
   const categoria = body.categoria === undefined ? "ATLETA" : body.categoria;
@@ -336,6 +392,7 @@ function parseHorseInput(body: Record<string, unknown>): HorseInput | null {
     !chip.valid ||
     !alimentacao.valid ||
     !mensalidade.valid ||
+    (produtos === null) ||
     fee < 0 ||
     fee > 9999999999.99 ||
     Math.abs(fee * 100 - Math.round(fee * 100)) > 0.000001 ||
@@ -380,11 +437,66 @@ function parseHorseInput(body: Record<string, unknown>): HorseInput | null {
     chip_resenha: chip.value,
     alimentacao_diaria: alimentacao.value,
     valor_mensalidade: fee,
+    ...(produtos ? { produtos } : {}),
   };
 }
 
 function horseCoatValid(value: string | null) {
   return value === null || horseCoatTypes.some((coat) => coat === value);
+}
+
+async function replaceHorseProducts(
+  client: PoolClient,
+  tenantId: string,
+  horseId: string,
+  registrationId: string | null,
+  selection: HorseProductSelection,
+) {
+  const requested = horseProductFields.flatMap((field) => {
+    const produtoId = selection[field];
+    return produtoId ? [{ produtoId, tipo: horseProductTypes[field] }] : [];
+  });
+  const currentResult = await client.query<{ produto_id: string; tipo_vinculo: string }>(
+    `select produto_id, tipo_vinculo
+     from public.equinos_produtos
+     where equino_id = $1 and tenant_id = $2`,
+    [horseId, tenantId],
+  );
+  const current = new Map(currentResult.rows.map((row) => [row.produto_id, row.tipo_vinculo]));
+
+  if (!registrationId) {
+    return requested.length === current.size &&
+      requested.every((link) => current.get(link.produtoId) === link.tipo);
+  }
+
+  const requestedIds = requested.map((link) => link.produtoId);
+  if (requestedIds.length > 0) {
+    const validProducts = await client.query<{ id: string }>(
+      `select id
+       from public.produtos
+       where id = any($1::uuid[])
+         and tenant_id = $2
+         and cadastro_cte_haras_id = $3
+         and (data_inicio <= ${productTodaySql} and data_fim >= ${productTodaySql}
+              or id = any($4::uuid[]))
+       for key share`,
+      [requestedIds, tenantId, registrationId, Array.from(current.keys())],
+    );
+    if (validProducts.rowCount !== requestedIds.length) return false;
+  }
+
+  await client.query(
+    "delete from public.equinos_produtos where equino_id = $1 and tenant_id = $2",
+    [horseId, tenantId],
+  );
+  for (const link of requested) {
+    await client.query(
+      `insert into public.equinos_produtos (equino_id, produto_id, tenant_id, tipo_vinculo)
+       values ($1, $2, $3, $4)`,
+      [horseId, link.produtoId, tenantId, link.tipo],
+    );
+  }
+  return true;
 }
 
 async function fetchHorseForResponse(
@@ -401,7 +513,21 @@ async function fetchHorseForResponse(
             e.pelagem, e.categoria, e.status, e.registro_associacao,
             e.chip_resenha, e.alimentacao_diaria,
             e.valor_mensalidade::double precision as valor_mensalidade,
-            e.created_at::text as created_at
+            e.created_at::text as created_at,
+            coalesce((
+              select json_agg(json_build_object(
+                'id', p.id, 'tipo_vinculo', ep.tipo_vinculo, 'nome', p.nome,
+                'codigo', p.codigo, 'fornecedor_nome', f.nome
+              ) order by ep.tipo_vinculo)
+              from public.equinos_produtos as ep
+              join public.produtos as p
+                on p.id = ep.produto_id and p.tenant_id = ep.tenant_id
+              join public.fornecedores as f
+                on f.id = p.fornecedor_id
+                 and f.cadastro_cte_haras_id = p.cadastro_cte_haras_id
+                 and f.tenant_id = p.tenant_id
+              where ep.equino_id = e.id and ep.tenant_id = e.tenant_id
+            ), '[]'::json) as produtos
      from public.equinos as e
      where e.id = $1 and e.tenant_id = $2 and e.excluido_em is null
        and ($3::boolean or e.criado_por = $4)`,
@@ -810,8 +936,8 @@ export async function POST(request: Request) {
         if (!canManageHorses) {
           return errorResponse("Este perfil não tem permissão para alterar o cadastro de cavalos.", 403);
         }
-        if ("produtos" in body || "produto_cadastro_id" in body) {
-          return errorResponse("Atualize a página: cavalos não usam mais vínculos de produtos.", 400);
+        if ("produto_cadastro_id" in body) {
+          return errorResponse("Atualize a página para selecionar os produtos por tipo.", 400);
         }
         const fields = parseHorseInput(body);
         if (!fields) {
@@ -872,6 +998,17 @@ export async function POST(request: Request) {
             ],
           );
           horseId = result.rows[0].id;
+          const productsSaved = await replaceHorseProducts(
+            client,
+            tenantId!,
+            horseId,
+            isClientAccount ? user.cadastro_cte_haras_id : null,
+            fields.produtos ?? emptyHorseProductSelection,
+          );
+          if (!productsSaved) {
+            await client.query("rollback");
+            return errorResponse("Selecione produtos ativos do seu CTE/Haras.", 400);
+          }
           await client.query("commit");
         } catch (error) {
           await client.query("rollback");
@@ -896,6 +1033,9 @@ export async function POST(request: Request) {
         if (!canManageHorses) {
           return errorResponse("Este perfil não tem permissão para alterar o cadastro de cavalos.", 403);
         }
+        if ("produto_cadastro_id" in body) {
+          return errorResponse("Atualize a página para selecionar os produtos por tipo.", 400);
+        }
         if (!isUuid(body.id)) {
           return errorResponse("Cavalo inválido.", 400);
         }
@@ -917,8 +1057,12 @@ export async function POST(request: Request) {
         if (!owner) {
           return errorResponse("Proprietário não encontrado no seu cadastro.", 403);
         }
-        const result = await pool.query<{ id: string }>(
-          `update public.equinos
+        const client = await pool.connect();
+        let horseId: string;
+        try {
+          await client.query("begin");
+          const result = await client.query<{ id: string }>(
+            `update public.equinos
            set nome_proprietario = $1,
                proprietario_id = case
                  when not $23::boolean and nome_proprietario is not distinct from $1
@@ -933,39 +1077,61 @@ export async function POST(request: Request) {
            where id = $19 and tenant_id = $20 and excluido_em is null
              and ($21::boolean or criado_por = $22)
            returning id`,
-          [
-            owner.name,
-            owner.id,
-            fields.nome_treinador,
-            fields.nome,
-            fields.foto_url,
-            fields.baia,
-            fields.raca,
-            fields.sexo,
-            fields.data_nascimento,
-            fields.nome_pai,
-            fields.nome_mae,
-            fields.pelagem,
-            fields.categoria,
-            fields.status,
-            fields.registro_associacao,
-            fields.chip_resenha,
-            fields.alimentacao_diaria,
-            fields.valor_mensalidade,
-            body.id,
-            tenantId,
-            isManager,
-            user.id,
-            isClientAccount,
-          ],
-        );
-        if (!result.rowCount) {
-          return errorResponse("Cavalo não encontrado neste centro.", 404);
+            [
+              owner.name,
+              owner.id,
+              fields.nome_treinador,
+              fields.nome,
+              fields.foto_url,
+              fields.baia,
+              fields.raca,
+              fields.sexo,
+              fields.data_nascimento,
+              fields.nome_pai,
+              fields.nome_mae,
+              fields.pelagem,
+              fields.categoria,
+              fields.status,
+              fields.registro_associacao,
+              fields.chip_resenha,
+              fields.alimentacao_diaria,
+              fields.valor_mensalidade,
+              body.id,
+              tenantId,
+              isManager,
+              user.id,
+              isClientAccount,
+            ],
+          );
+          if (!result.rowCount) {
+            await client.query("rollback");
+            return errorResponse("Cavalo não encontrado neste centro.", 404);
+          }
+          horseId = result.rows[0].id;
+          if (fields.produtos) {
+            const productsSaved = await replaceHorseProducts(
+              client,
+              tenantId!,
+              horseId,
+              isClientAccount ? user.cadastro_cte_haras_id : null,
+              fields.produtos,
+            );
+            if (!productsSaved) {
+              await client.query("rollback");
+              return errorResponse("Selecione produtos ativos do seu CTE/Haras.", 400);
+            }
+          }
+          await client.query("commit");
+        } catch (error) {
+          await client.query("rollback");
+          throw error;
+        } finally {
+          client.release();
         }
         const horse = await fetchHorseForResponse(
           pool,
           tenantId!,
-          result.rows[0].id,
+          horseId,
           isManager,
           user.id,
         );
@@ -1248,6 +1414,14 @@ export async function POST(request: Request) {
         const valor = parseMoney(body.amount);
         const dataVencimento = body.dueDate;
         const competencia = parseOptionalDate(body.competence);
+        const dataPagamento = parseOptionalDate(body.paymentDate);
+        const contaInformada = parseOptionalText(body.accountText, 120);
+        const contaId =
+          body.accountId === undefined || body.accountId === null || body.accountId === ""
+            ? null
+            : isUuid(body.accountId)
+              ? body.accountId
+              : undefined;
         if (
           !isUuid(clientId) ||
           !descricao ||
@@ -1256,9 +1430,13 @@ export async function POST(request: Request) {
           !financeCategories.has(categoria) ||
           valor === null ||
           !isDateOnly(dataVencimento) ||
-          competencia === undefined
+          competencia === undefined ||
+          dataPagamento === undefined ||
+          !contaInformada.valid ||
+          contaId === undefined ||
+          (dataPagamento !== null && !contaId)
         ) {
-          return errorResponse("Confira o cliente e os dados do lançamento.", 400);
+          return errorResponse("Confira o cliente, a conta e os dados do lançamento.", 400);
         }
         const client = await pool.query<{ nome: string }>(
           `select nome from public.proprietarios
@@ -1268,23 +1446,37 @@ export async function POST(request: Request) {
         if (!client.rowCount) {
           return errorResponse("Cliente não encontrado para este login.", 404);
         }
-        const result = await pool.query<{ id: string }>(
+        if (contaId) {
+          const account = await pool.query(
+            "select 1 from public.contas_bancarias where id = $1 and tenant_id = $2",
+            [contaId, tenantId],
+          );
+          if (!account.rowCount) {
+            return errorResponse("Conta bancária não encontrada para este centro.", 404);
+          }
+        }
+        const result = await pool.query<{ id: string; status: string }>(
           `insert into public.financeiro_lancamentos (
-             tenant_id, criado_por, proprietario_id, natureza, categoria,
-             descricao, valor, competencia, data_vencimento, status
+             tenant_id, criado_por, proprietario_id, conta_bancaria_id, conta_informada,
+             natureza, categoria, descricao, valor, competencia, data_vencimento,
+             data_pagamento, status
            )
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDENTE')
-           returning id`,
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                   case when $12::date is null then 'PENDENTE' else 'PAGO' end)
+           returning id, status`,
           [
             tenantId,
             user.id,
             clientId,
+            contaId,
+            contaInformada.value,
             natureza,
             categoria,
             descricao,
             valor,
             competencia,
             dataVencimento,
+            dataPagamento,
           ],
         );
         return Response.json(
@@ -1298,8 +1490,11 @@ export async function POST(request: Request) {
               data_vencimento: dataVencimento,
               natureza,
               categoria,
-              status: "PENDENTE",
+              status: result.rows[0].status,
               competencia,
+              data_pagamento: dataPagamento,
+              conta_bancaria_id: contaId,
+              conta_informada: contaInformada.value,
             },
           },
           { status: 201 },
@@ -1317,6 +1512,24 @@ export async function POST(request: Request) {
         const valor = parseMoney(body.amount);
         const dataVencimento = body.dueDate;
         const competencia = parseOptionalDate(body.competence);
+        const paymentFieldsProvided = body.paymentDate !== undefined;
+        const dataPagamento = paymentFieldsProvided
+          ? parseOptionalDate(body.paymentDate)
+          : undefined;
+        const contaInformada = parseOptionalText(body.accountText, 120);
+        const contaId =
+          body.accountId === undefined
+            ? undefined
+            : body.accountId === null || body.accountId === ""
+              ? null
+              : isUuid(body.accountId)
+                ? body.accountId
+                : undefined;
+        const invalidContaId =
+          body.accountId !== undefined &&
+          body.accountId !== null &&
+          body.accountId !== "" &&
+          !isUuid(body.accountId);
         if (
           !isUuid(body.id) ||
           !isUuid(clientId) ||
@@ -1326,9 +1539,15 @@ export async function POST(request: Request) {
           !financeCategories.has(categoria) ||
           valor === null ||
           !isDateOnly(dataVencimento) ||
-          competencia === undefined
+          competencia === undefined ||
+          (paymentFieldsProvided && dataPagamento === undefined) ||
+          !contaInformada.valid ||
+          invalidContaId ||
+          (paymentFieldsProvided && contaId === undefined) ||
+          (!paymentFieldsProvided && contaId !== undefined) ||
+          (dataPagamento !== undefined && dataPagamento !== null && !contaId)
         ) {
-          return errorResponse("Confira o cliente e os dados do lançamento.", 400);
+          return errorResponse("Confira o cliente, a conta e os dados do lançamento.", 400);
         }
         const client = await pool.query<{ nome: string }>(
           `select nome from public.proprietarios
@@ -1338,22 +1557,44 @@ export async function POST(request: Request) {
         if (!client.rowCount) {
           return errorResponse("Cliente não encontrado para este login.", 404);
         }
-        const result = await pool.query<{ id: string; status: string }>(
+        if (contaId) {
+          const account = await pool.query(
+            "select 1 from public.contas_bancarias where id = $1 and tenant_id = $2",
+            [contaId, tenantId],
+          );
+          if (!account.rowCount) {
+            return errorResponse("Conta bancária não encontrada para este centro.", 404);
+          }
+        }
+        const result = await pool.query<{
+          id: string;
+          status: string;
+          data_pagamento: string | null;
+          conta_bancaria_id: string | null;
+        }>(
           `update public.financeiro_lancamentos
-           set proprietario_id = $1, natureza = $2, categoria = $3,
-               descricao = $4, valor = $5, competencia = $6,
-               data_vencimento = $7
-           where id = $8 and tenant_id = $9 and criado_por = $10
+           set proprietario_id = $1, conta_informada = $3,
+               natureza = $4, categoria = $5, descricao = $6, valor = $7,
+               competencia = $8, data_vencimento = $9,
+               conta_bancaria_id = case when $11::boolean then $2 else conta_bancaria_id end,
+               data_pagamento = case when $11::boolean then $10 else data_pagamento end,
+               status = case when not $11::boolean then status
+                             when $10::date is null then 'PENDENTE' else 'PAGO' end
+           where id = $12 and tenant_id = $13 and criado_por = $14
              and excluido_em is null
-           returning id, status`,
+           returning id, status, data_pagamento::text as data_pagamento, conta_bancaria_id`,
           [
             clientId,
+            contaId,
+            contaInformada.value,
             natureza,
             categoria,
             descricao,
             valor,
             competencia,
             dataVencimento,
+            dataPagamento,
+            paymentFieldsProvided,
             body.id,
             tenantId,
             user.id,
@@ -1374,6 +1615,9 @@ export async function POST(request: Request) {
             categoria,
             status: result.rows[0].status,
             competencia,
+            data_pagamento: result.rows[0].data_pagamento,
+            conta_bancaria_id: result.rows[0].conta_bancaria_id,
+            conta_informada: contaInformada.value,
           },
         });
       }
@@ -1394,6 +1638,36 @@ export async function POST(request: Request) {
           return errorResponse("Lançamento não encontrado para este login.", 404);
         }
         return Response.json({ deleted: true });
+      }
+
+      case "createFinanceAccount": {
+        if (!isClientAccount || !hasTenant) {
+          return errorResponse("Apenas o login CTE/Haras pode criar contas próprias.", 403);
+        }
+        const name = sanitizeText(body.name, 120);
+        const type = body.type;
+        const pixKey = parseOptionalText(body.pixKey, 200);
+        if (
+          !name ||
+          typeof type !== "string" ||
+          !financeAccountTypes.has(type) ||
+          !pixKey.valid
+        ) {
+          return errorResponse("Confira os dados da conta financeira.", 400);
+        }
+        const result = await pool.query<{
+          id: string;
+          nome: string;
+          tipo: string;
+          chave_pix: string | null;
+          saldo_atual: number;
+        }>(
+          `insert into public.contas_bancarias (tenant_id, nome, tipo, chave_pix)
+           values ($1, $2, $3, $4)
+           returning id, nome, tipo, chave_pix, saldo_atual::double precision as saldo_atual`,
+          [tenantId, name, type, pixKey.value],
+        );
+        return Response.json({ account: result.rows[0] }, { status: 201 });
       }
 
       case "generateBilling": {

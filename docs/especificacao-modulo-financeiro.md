@@ -1,6 +1,6 @@
 # Especificação do módulo Financeiro
 
-**Status:** Financeiro ADMIN implementado localmente; a interface CTE/Haras ainda precisa ser confrontada com os requisitos. Tratamento de dados legados e políticas operacionais permanecem pendentes.
+**Status:** Financeiro ADMIN e interface de lançamentos CTE/Haras implementados localmente. Tratamento de dados legados e políticas operacionais permanecem pendentes.
 **Data:** 19/11/2026
 
 ## 1. Objetivo
@@ -126,6 +126,7 @@ A implementação inicial está aplicada no ambiente local:
 - O perfil `ADMIN` existente opera globalmente, selecionando no painel o tenant para as funções operacionais. Essa seleção não permite consultar ou alterar o Financeiro CTE/Haras.
 - Rotas de comprovantes validam a propriedade do lançamento para logins CTE/Haras; o ADMIN não recebe acesso a esses comprovantes.
 - O Financeiro ADMIN oferece contas e lançamentos do próprio login, data de pagamento, alteração, exclusão lógica, filtros, resumo dos valores e exportação CSV.
+- A interface CTE/Haras oferece cadastro e consulta dos lançamentos do login autenticado, busca, detalhes, alteração, exclusão lógica, baixa vinculada a conta, cadastro de contas e resumo de receitas, despesas e pendências.
 - As rotas de comprovantes em PDF ou imagem validam o acesso do login CTE/Haras ao próprio lançamento; a interface operacional de anexos ainda precisa ser restaurada.
 - `npm run db:setup` e `npm run db:admin-setup` aplicam os esquemas locais. Testes integrados locais cobriram isolamento entre logins, validação do cliente, acesso global ADMIN e separação das bases.
 

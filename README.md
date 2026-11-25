@@ -154,8 +154,8 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
 - No cadastro de cavalos, ADMIN tem acesso somente à consulta e vê o CTE/Haras
   responsável por cada registro, quando identificável. A inclusão, alteração e
   exclusão continuam disponíveis aos perfis CTE/Haras e OPERACIONAL autorizados.
-- Cavalos não possuem vínculo com produtos. A mensalidade é informada manualmente
-  e valores já registrados permanecem inalterados.
+- Cavalos podem receber vínculos opcionais de Feno, Ração, Baia e Outros produtos
+  vigentes do mesmo CTE/Haras. A mensalidade continua informada manualmente.
 - Na consulta de clientes, ADMIN vê o vínculo CTE/Haras de cada cadastro. Usuários
   CTE/Haras veem somente os clientes criados pelo próprio login e não recebem
   essa coluna. A consulta, alteração e exclusão de cadastros CTE/Haras ficam

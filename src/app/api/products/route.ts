@@ -237,6 +237,16 @@ export async function DELETE(request: Request) {
       await client.query("rollback");
       return Response.json({ error: "Produto não encontrado ou não disponível para exclusão." }, { status: 404 });
     }
+    const horseLinks = await client.query(
+      `select 1 from public.equinos_produtos
+       where produto_id = $1 and tenant_id = $2
+       limit 1`,
+      [body.id, user.tenant_id],
+    );
+    if (horseLinks.rowCount) {
+      await client.query("rollback");
+      return Response.json({ error: "O produto está vinculado a um cavalo e não pode ser excluído." }, { status: 409 });
+    }
     await client.query("delete from public.produtos where id = $1", [body.id]);
     const remaining = await client.query<{ id: string }>(
       `select id
