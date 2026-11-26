@@ -50,6 +50,7 @@ create table if not exists public.proprietarios (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants (id) on delete cascade,
   criado_por uuid references public.usuarios (id) on delete set null,
+  cadastro_cte_haras_id uuid,
   nome text not null,
   telefone_whatsapp text,
   documento text,
@@ -59,6 +60,7 @@ create table if not exists public.proprietarios (
 
 alter table if exists public.proprietarios
   add column if not exists criado_por uuid references public.usuarios (id) on delete set null,
+  add column if not exists cadastro_cte_haras_id uuid,
   add column if not exists cpf text,
   add column if not exists rg text,
   add column if not exists data_nascimento date,
@@ -97,6 +99,26 @@ create table if not exists public.cadastros_cte_haras (
 
 create index if not exists cadastros_cte_haras_tenant_nome_idx
   on public.cadastros_cte_haras (tenant_id, nome);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.proprietarios'::regclass
+      and conname = 'proprietarios_cadastro_cte_haras_fk'
+  ) then
+    alter table public.proprietarios
+      add constraint proprietarios_cadastro_cte_haras_fk
+      foreign key (cadastro_cte_haras_id)
+      references public.cadastros_cte_haras (id)
+      on delete set null;
+  end if;
+end
+$$;
+
+create index if not exists proprietarios_cadastro_cte_haras_idx
+  on public.proprietarios (cadastro_cte_haras_id);
 
 create table if not exists public.prestadores_servicos (
   id uuid primary key default gen_random_uuid(),

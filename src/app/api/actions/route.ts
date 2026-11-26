@@ -88,6 +88,23 @@ function isUuid(value: unknown): value is string {
   );
 }
 
+async function resolveClientRegistrationId(
+  pool: ReturnType<typeof getPool>,
+  tenantId: string | null,
+  value: unknown,
+): Promise<string | null> {
+  if (!tenantId || !isUuid(value)) {
+    return null;
+  }
+  const result = await pool.query<{ id: string }>(
+    `select id
+     from public.cadastros_cte_haras
+     where id = $1 and tenant_id = $2`,
+    [value, tenantId],
+  );
+  return result.rows[0]?.id ?? null;
+}
+
 function isDateOnly(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false;
@@ -2080,21 +2097,28 @@ export async function POST(request: Request) {
           return errorResponse(validation.message, 400);
         }
         const fields = validation.fields;
+        const registrationId = user.perfil === "ADMIN"
+          ? await resolveClientRegistrationId(pool, tenantId, body.cadastro_cte_haras_id)
+          : null;
+        if (user.perfil === "ADMIN" && !registrationId) {
+          return errorResponse("Selecione um CTE/Haras válido.", 400);
+        }
 
         const result = await pool.query(
           `insert into public.proprietarios (
-             tenant_id, criado_por, nome, telefone_whatsapp, documento, cpf, rg,
+             tenant_id, criado_por, cadastro_cte_haras_id, nome, telefone_whatsapp, documento, cpf, rg,
              data_nascimento, idade, profissao, endereco_completo,
              numero_socio_abccmm, data_inicio, data_fim
            )
-           values ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, $13::date, $14::date)
-           returning id, nome, telefone_whatsapp, documento, cpf, rg,
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12, $13, $14::date, $15::date)
+           returning id, cadastro_cte_haras_id, nome, telefone_whatsapp, documento, cpf, rg,
              data_nascimento::text as data_nascimento, idade, profissao,
              endereco_completo, numero_socio_abccmm::double precision as numero_socio_abccmm,
              data_inicio::text as data_inicio, data_fim::text as data_fim`,
           [
             tenantId,
             user.id,
+            registrationId,
             fields.nome,
             fields.telefone_whatsapp,
             fields.documento,
@@ -2124,16 +2148,23 @@ export async function POST(request: Request) {
           return errorResponse(validation.message, 400);
         }
         const fields = validation.fields;
+        const registrationId = user.perfil === "ADMIN"
+          ? await resolveClientRegistrationId(pool, tenantId, body.cadastro_cte_haras_id)
+          : null;
+        if (user.perfil === "ADMIN" && !registrationId) {
+          return errorResponse("Selecione um CTE/Haras válido.", 400);
+        }
 
         const result = await pool.query(
           `update public.proprietarios
            set nome = $1, telefone_whatsapp = $2, documento = $3, cpf = $4,
                rg = $5, data_nascimento = $6::date, idade = $7,
                profissao = $8, endereco_completo = $9,
-               numero_socio_abccmm = $10, data_inicio = $11::date, data_fim = $12::date
+               numero_socio_abccmm = $10, data_inicio = $11::date, data_fim = $12::date,
+               cadastro_cte_haras_id = case when $15::boolean then $16::uuid else cadastro_cte_haras_id end
            where id = $13 and tenant_id = $14
-             and ($15::uuid is null or criado_por = $15)
-           returning id, nome, telefone_whatsapp, documento, cpf, rg,
+             and ($17::uuid is null or criado_por = $17)
+           returning id, cadastro_cte_haras_id, nome, telefone_whatsapp, documento, cpf, rg,
              data_nascimento::text as data_nascimento, idade, profissao,
              endereco_completo, numero_socio_abccmm::double precision as numero_socio_abccmm,
              data_inicio::text as data_inicio, data_fim::text as data_fim`,
@@ -2152,6 +2183,8 @@ export async function POST(request: Request) {
             fields.data_fim,
             body.id,
             tenantId,
+            user.perfil === "ADMIN",
+            registrationId,
             user.perfil === "ADMIN" ? null : user.id,
           ],
         );

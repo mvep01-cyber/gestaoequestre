@@ -199,6 +199,7 @@ type ReproductionRecipientOption = Pick<
 type ClientRecord = {
   id: string;
   nome: string;
+  cadastro_cte_haras_id?: string | null;
   cte_haras_nome?: string | null;
   cte_haras_tipo?: "CTE" | "HARAS" | null;
   telefone_whatsapp: string | null;
@@ -250,6 +251,7 @@ type DashboardProps = {
 type ClientFormState = {
   id: string;
   nome: string;
+  cadastro_cte_haras_id: string;
   telefone_whatsapp: string;
   documento: string;
   cpf: string;
@@ -320,6 +322,7 @@ const recipientFormDefaults: RecipientFormState = {
 const clientFormDefaults: ClientFormState = {
   id: "",
   nome: "",
+  cadastro_cte_haras_id: "",
   telefone_whatsapp: "",
   documento: "",
   cpf: "",
@@ -892,6 +895,7 @@ export function Dashboard({
       if (!query) return true;
       const haystack = [
         client.nome,
+        ...(isAdmin ? [client.cte_haras_nome ?? ""] : []),
         client.telefone_whatsapp ?? "",
         client.documento ?? "",
         client.cpf ?? "",
@@ -901,7 +905,7 @@ export function Dashboard({
       ].join(" ").toLocaleLowerCase("pt-BR");
       return haystack.includes(query);
     });
-  }, [clients, search]);
+  }, [clients, isAdmin, search]);
 
   const title = sectionTitles[activeSection];
   const pendingCount = demo ? applications.length : pendingMedicationCount;
@@ -1455,9 +1459,15 @@ export function Dashboard({
     while (clients.some((client) => client.id === `demo-client-${demoClientNumber}`)) {
       demoClientNumber += 1;
     }
+    const clientRegistration = isAdmin
+      ? cteHarasRegistrations.find((registration) => registration.id === clientForm.cadastro_cte_haras_id)
+      : undefined;
     const newClient: ClientRecord = {
       id: `demo-client-${demoClientNumber}`,
       nome: clientForm.nome.trim(),
+      cadastro_cte_haras_id: isAdmin ? clientForm.cadastro_cte_haras_id || null : null,
+      cte_haras_nome: clientRegistration?.nome ?? null,
+      cte_haras_tipo: clientRegistration?.tipo_cadastro ?? null,
       telefone_whatsapp: clientForm.telefone_whatsapp.trim() || null,
       documento: clientForm.documento.trim() || null,
       cpf: clientForm.cpf?.trim() || null,
@@ -1503,6 +1513,7 @@ export function Dashboard({
       client
         ? {
             ...client,
+            cadastro_cte_haras_id: client.cadastro_cte_haras_id ?? "",
             telefone_whatsapp: client.telefone_whatsapp ?? "",
             documento: client.documento ?? "",
             cpf: client.cpf ?? "",
@@ -1529,8 +1540,18 @@ export function Dashboard({
     }
     setIsSaving(true);
 
+    const clientRegistration = isAdmin
+      ? cteHarasRegistrations.find((registration) => registration.id === clientForm.cadastro_cte_haras_id)
+      : undefined;
     const updatedClient: ClientRecord = {
       ...clientForm,
+      cadastro_cte_haras_id: clientForm.cadastro_cte_haras_id || null,
+      ...(isAdmin
+        ? {
+            cte_haras_nome: clientRegistration?.nome ?? null,
+            cte_haras_tipo: clientRegistration?.tipo_cadastro ?? null,
+          }
+        : {}),
       idade: clientForm.idade ? Number(clientForm.idade) : null,
       numero_socio_abccmm: clientForm.numero_socio_abccmm ? Number(clientForm.numero_socio_abccmm) : null,
     };
@@ -2660,7 +2681,7 @@ export function Dashboard({
             <Search size={20} />
             <span className="sr-only">Buscar cliente</span>
             <input
-              placeholder="Buscar por nome, documento ou telefone"
+              placeholder={isAdmin ? "Buscar por CTE/Haras ou nome do cliente" : "Buscar por nome, documento ou telefone"}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -2685,28 +2706,41 @@ export function Dashboard({
           <div className="client-table-wrap">
             <table className="client-table">
               <thead>
-                <tr>
-                  <th scope="col">Nome</th>
-                  <th scope="col">Telefone</th>
-                  <th scope="col">Data de início</th>
-                  <th scope="col">Sócio ABCCMM</th>
-                  {isAdmin && <th scope="col">CTE/Haras cadastrado</th>}
-                  <th scope="col">Ações</th>
-                </tr>
+                {isAdmin ? (
+                  <tr>
+                    <th scope="col">CTE/Haras</th>
+                    <th scope="col">Nome do cliente</th>
+                    <th scope="col">Ações</th>
+                  </tr>
+                ) : (
+                  <tr>
+                    <th scope="col">Nome</th>
+                    <th scope="col">Telefone</th>
+                    <th scope="col">Data de início</th>
+                    <th scope="col">Sócio ABCCMM</th>
+                    <th scope="col">Ações</th>
+                  </tr>
+                )}
               </thead>
               <tbody>
                 {filteredClients.map((client) => (
                   <tr key={client.id}>
-                    <td>{client.nome}</td>
-                    <td>{client.telefone_whatsapp || "—"}</td>
-                    <td>{client.data_inicio ? client.data_inicio.slice(0, 10).split("-").reverse().join("/") : "—"}</td>
-                    <td>{client.numero_socio_abccmm ?? "—"}</td>
-                    {isAdmin && (
-                      <td>
-                        {client.cte_haras_nome
-                          ? `${client.cte_haras_tipo === "CTE" ? "CTE" : "Haras"} — ${client.cte_haras_nome}`
-                          : "Sem vínculo CTE/Haras"}
-                      </td>
+                    {isAdmin ? (
+                      <>
+                        <td>
+                          {client.cte_haras_nome
+                            ? `${client.cte_haras_tipo === "CTE" ? "CTE" : "Haras"} — ${client.cte_haras_nome}`
+                            : "Sem vínculo CTE/Haras"}
+                        </td>
+                        <td>{client.nome}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td>{client.nome}</td>
+                        <td>{client.telefone_whatsapp || "—"}</td>
+                        <td>{client.data_inicio ? client.data_inicio.slice(0, 10).split("-").reverse().join("/") : "—"}</td>
+                        <td>{client.numero_socio_abccmm ?? "—"}</td>
+                      </>
                     )}
                     <td>
                       <div className="client-row-actions">
@@ -3213,6 +3247,26 @@ export function Dashboard({
                   placeholder="Ex.: João da Silva"
                 />
               </div>
+              {isAdmin && (
+                <div className="client-record-field">
+                  <label htmlFor="client-registration">CTE/Haras</label>
+                  <select
+                    id="client-registration"
+                    required
+                    value={clientForm.cadastro_cte_haras_id}
+                    onChange={(event) => setClientForm({ ...clientForm, cadastro_cte_haras_id: event.target.value })}
+                  >
+                    <option value="" disabled={cteHarasRegistrations.length === 0}>
+                      {cteHarasRegistrations.length > 0 ? "Selecione o CTE/Haras" : "Nenhum CTE/Haras cadastrado"}
+                    </option>
+                    {cteHarasRegistrations.map((registration) => (
+                      <option key={registration.id} value={registration.id}>
+                        {registration.tipo_cadastro === "CTE" ? "CTE" : "Haras"} — {registration.nome}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="client-record-field">
                 <label htmlFor="client-phone">Telefone WhatsApp</label>
                 <input

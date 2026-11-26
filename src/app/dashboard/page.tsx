@@ -80,6 +80,7 @@ type TenantRecord = {
 type BillingOwner = {
   id: string;
   nome: string;
+  cadastro_cte_haras_id?: string | null;
   cte_haras_nome?: string | null;
   cte_haras_tipo?: "CTE" | "HARAS" | null;
   telefone_whatsapp: string | null;
@@ -522,12 +523,14 @@ export default async function DashboardPage({
                   p.data_nascimento::text as data_nascimento, p.idade, p.profissao,
                   p.endereco_completo, p.numero_socio_abccmm,
                   p.data_inicio::text as data_inicio, p.data_fim::text as data_fim,
+                  coalesce(p.cadastro_cte_haras_id, creator.cadastro_cte_haras_id) as cadastro_cte_haras_id,
                   c.nome as cte_haras_nome, c.tipo_cadastro as cte_haras_tipo
            from public.proprietarios as p
            left join public.usuarios as creator
              on creator.id = p.criado_por and creator.tenant_id = p.tenant_id
            left join public.cadastros_cte_haras as c
-             on c.id = creator.cadastro_cte_haras_id and c.tenant_id = p.tenant_id
+             on c.id = coalesce(p.cadastro_cte_haras_id, creator.cadastro_cte_haras_id)
+              and c.tenant_id = p.tenant_id
            where p.tenant_id = $1
            order by p.nome`,
           [tenantId],

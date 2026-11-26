@@ -43,6 +43,13 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
    O esquema está em `database/schema.sql`. A operação é idempotente para o
    banco operacional deste projeto.
 
+   Para aplicar somente o vínculo entre clientes e CTE/Haras em um banco
+   existente, confira `DATABASE_URL` e execute:
+
+   ```powershell
+   node --env-file=.env.local scripts\migrate-client-centers.mjs
+   ```
+
 5. Configure `ADMIN_DATABASE_URL` em `.env.local` com um banco e usuário
    PostgreSQL dedicados ao Financeiro ADMIN. Para o ambiente local, use um nome
    de banco diferente de `campovivo`. Execute:
