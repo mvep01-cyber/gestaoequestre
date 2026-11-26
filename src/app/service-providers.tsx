@@ -38,14 +38,16 @@ async function loadProviders(): Promise<ProviderData> {
   return result;
 }
 
-export function ServiceProviders({ demo, centerId, onCentersChange, onCenterChange }: {
+export function ServiceProviders({ demo, isAdmin, centerId, onCentersChange, onCenterChange }: {
   demo: boolean;
+  isAdmin: boolean;
   centerId: string;
   onCentersChange: Dispatch<SetStateAction<ProviderCenter[]>>;
   onCenterChange: Dispatch<SetStateAction<string>>;
 }) {
   const [data, setData] = useState<ProviderData | null>(null);
   const [form, setForm] = useState<ProviderFields | null>(null);
+  const [formCenterId, setFormCenterId] = useState(centerId);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [viewing, setViewing] = useState(false);
   const [search, setSearch] = useState("");
@@ -83,7 +85,7 @@ export function ServiceProviders({ demo, centerId, onCentersChange, onCenterChan
       const response = await fetch("/api/service-providers", {
         method: editingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, ...(editingId ? { id: editingId } : { cadastro_cte_haras_id: centerId }) }),
+        body: JSON.stringify({ ...form, ...(editingId ? { id: editingId } : { cadastro_cte_haras_id: isAdmin ? formCenterId : centerId }) }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "Não foi possível salvar o prestador.");
@@ -111,13 +113,15 @@ export function ServiceProviders({ demo, centerId, onCentersChange, onCenterChan
   if (demo) return <p className="feedback-message">O cadastro de prestadores exige uma conexão com o banco de dados.</p>;
   if (loading) return <p>Carregando prestadores...</p>;
   if (!data) return <p className="feedback-message" role="alert">{feedback}</p>;
-  const filtered = data.providers.filter((provider) => provider.cadastro_cte_haras_id === centerId &&
+  const filtered = data.providers.filter((provider) => (isAdmin || provider.cadastro_cte_haras_id === centerId) &&
     [provider.cadastro_nome, ...fields.map(({ key }) => provider[key])].join(" ")
       .toLocaleLowerCase("pt-BR").includes(search.trim().toLocaleLowerCase("pt-BR")),
   );
+  const formCenterName = data.centers.find((center) => center.id === formCenterId)?.nome ?? "";
   const open = (provider?: Provider, readOnly = false) => {
     setFeedback("");
     setEditingId(provider?.id ?? null);
+    setFormCenterId(provider?.cadastro_cte_haras_id ?? centerId);
     setViewing(readOnly);
     setForm(provider ? { nome: provider.nome, cpf: provider.cpf.toUpperCase(), rg: provider.rg, endereco: provider.endereco, complemento: provider.complemento, cep: provider.cep,
       bairro: provider.bairro, cidade: provider.cidade, estado: provider.estado, telefone: provider.telefone,
@@ -128,19 +132,27 @@ export function ServiceProviders({ demo, centerId, onCentersChange, onCenterChan
       {feedback && !form && <p className="feedback-message" role="status">{feedback}</p>}
       <div className="provider-toolbar">
         <input className="provider-search" type="search" aria-label="Buscar nesta lista" placeholder="Buscar nesta lista" value={search} onChange={(event) => setSearch(event.target.value)} />
-        <button className="button button-primary" disabled={saving || !centerId} onClick={() => open()}>＋ Nova prestação de serviços</button>
+        <button className="button button-primary" disabled={saving || (isAdmin ? data.centers.length === 0 : !centerId)} onClick={() => open()}>＋ Nova prestação de serviços</button>
       </div>
       {data.centers.length === 0 && <p role="status">Nenhum CTE/Haras disponível para este cadastro.</p>}
       <div className="provider-table-wrap"><table className="provider-table">
-          <thead><tr>{fields.map(({ key, column }) => <th scope="col" key={key}>{column}</th>)}<th scope="col">Ações</th></tr></thead>
+          <thead><tr>{isAdmin ? <>
+            <th scope="col">Nome do CTE / Haras</th>
+            <th scope="col">Nome do prestador de serviço</th>
+            <th scope="col">Serviços oferecidos</th>
+          </> : fields.map(({ key, column }) => <th scope="col" key={key}>{column}</th>)}<th scope="col">Ações</th></tr></thead>
           <tbody>{filtered.map((provider) => <tr key={provider.id}>
-            {fields.map(({ key }) => <td key={key}>{provider[key] || "—"}</td>)}
+            {isAdmin ? <>
+              <td>{provider.cadastro_nome}</td>
+              <td>{provider.nome}</td>
+              <td>{provider.servicos || "—"}</td>
+            </> : fields.map(({ key }) => <td key={key}>{provider[key] || "—"}</td>)}
             <td><div className="provider-row-actions">
               <button className="button button-secondary provider-small-button" onClick={() => open(provider, true)}>Visualizar</button>
               <button className="button button-quiet provider-small-button" onClick={() => open(provider)}>Alterar</button>
             </div></td>
           </tr>)}
-          {filtered.length === 0 && <tr><td className="provider-empty" colSpan={fields.length + 1}>Nenhum registro encontrado.</td></tr>}
+          {filtered.length === 0 && <tr><td className="provider-empty" colSpan={isAdmin ? 4 : fields.length + 1}>Nenhum registro encontrado.</td></tr>}
           </tbody>
         </table></div>
       <div className="provider-note">Informe os serviços oferecidos pelo prestador.</div>
@@ -151,16 +163,30 @@ export function ServiceProviders({ demo, centerId, onCentersChange, onCenterChan
           </div>
           {viewing ? <>
             <div className="provider-form-grid">
+              {isAdmin && <div className="provider-field"><span>CTE/Haras</span><strong>{formCenterName}</strong></div>}
               {fields.map(({ key, column }) => <div className="provider-field" key={key}><span>{column}</span><strong>{form[key] || "—"}</strong></div>)}
             </div>
             <div className="provider-form-actions"><button type="button" className="button button-secondary" onClick={() => setForm(null)}>Fechar</button></div>
           </> : <form onSubmit={(event) => void submit(event)}>
             <div className="provider-form-grid">
-            <label className="provider-field" htmlFor="provider-center">CTE/Haras
-              <select id="provider-center" disabled value={centerId}>
-                {data.centers.map((center) => <option key={center.id} value={center.id}>{center.nome}</option>)}
-              </select>
-            </label>
+            {isAdmin && editingId ? (
+              <label className="provider-field" htmlFor="provider-center">CTE/Haras
+                <input id="provider-center" readOnly value={formCenterName} />
+              </label>
+            ) : isAdmin ? (
+              <label className="provider-field" htmlFor="provider-center">CTE/Haras
+                <select id="provider-center" required value={formCenterId} onChange={(event) => setFormCenterId(event.target.value)}>
+                  <option value="">Selecione</option>
+                  {data.centers.map((center) => <option key={center.id} value={center.id}>{center.nome}</option>)}
+                </select>
+              </label>
+            ) : (
+              <label className="provider-field" htmlFor="provider-center">CTE/Haras
+                <select id="provider-center" disabled value={isAdmin ? formCenterId : centerId}>
+                  {data.centers.map((center) => <option key={center.id} value={center.id}>{center.nome}</option>)}
+                </select>
+              </label>
+            )}
             {fields.map(({ key, label, type }) => <label className="provider-field" htmlFor={`provider-${key}`} key={key}>
               {label}
               {key === "estado" ? <select id={`provider-${key}`} value={form[key]} onChange={(event) => setForm({ ...form, [key]: event.target.value })}>
@@ -172,10 +198,16 @@ export function ServiceProviders({ demo, centerId, onCentersChange, onCenterChan
                 value={form[key]} onChange={(event) => setForm({ ...form, [key]: key === "cpf" ? event.target.value.toUpperCase() : event.target.value })} />}
             </label>)}
             </div>
-            <p className="provider-form-note">O nome do prestador é obrigatório. Para trocar o centro, feche o formulário e selecione-o no topo.</p>
+            <p className="provider-form-note">
+              {isAdmin
+                ? editingId
+                  ? "O nome do prestador é obrigatório. O CTE/Haras vinculado não pode ser alterado aqui."
+                  : "O nome do prestador é obrigatório. Selecione o CTE/Haras ao qual ele será vinculado."
+                : "O nome do prestador é obrigatório. Para trocar o centro, feche o formulário e selecione-o no topo."}
+            </p>
             {feedback && <p className="client-form-error" role="alert">{feedback}</p>}
             <div className="provider-form-actions"><button type="button" className="button button-quiet" disabled={saving} onClick={() => setForm(null)}>Cancelar</button>
-              <button className="button button-primary" disabled={saving || !centerId}>{saving ? "Salvando..." : "Salvar"}</button></div>
+              <button className="button button-primary" disabled={saving || (isAdmin ? !formCenterId : !centerId)}>{saving ? "Salvando..." : "Salvar"}</button></div>
           </form>}
         </section>
       </div>}

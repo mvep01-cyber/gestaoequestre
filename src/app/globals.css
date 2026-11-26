@@ -1559,6 +1559,10 @@ input:focus-visible {
   overflow-y: auto;
 }
 
+.client-modal-card--record {
+  width: min(100%, 760px);
+}
+
 .client-form {
   display: grid;
   gap: 12px;
@@ -1588,6 +1592,72 @@ input:focus-visible {
   border-radius: 10px;
   background: #fff;
   color: var(--foreground);
+}
+
+.client-record-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
+.client-record-field {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.client-record-form label {
+  margin: 0;
+}
+
+.client-record-form input,
+.client-record-form textarea {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 0;
+  padding: 0 13px;
+  border: 1px solid #c1ccc3;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--foreground);
+}
+
+.client-record-form textarea {
+  min-height: 90px;
+  padding: 12px 13px;
+  resize: vertical;
+}
+
+.client-record-field--full,
+.client-record-form .client-form-error,
+.client-record-form .modal-actions,
+.client-detail-full {
+  grid-column: 1 / -1;
+}
+
+.client-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+  margin-top: 22px;
+}
+
+.client-detail-grid > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.client-detail-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.client-detail-grid strong {
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 650;
 }
 
 .client-form .checkbox-label {
@@ -1726,12 +1796,6 @@ input:focus-visible {
 .finance-row-actions {
   flex-wrap: wrap;
   min-width: 255px;
-}
-
-.finance-row-actions .button {
-  min-height: 34px;
-  padding: 0 9px;
-  font-size: 11px;
 }
 
 .finance-settlement {
@@ -2129,6 +2193,11 @@ input:focus-visible {
   gap: 5px;
 }
 
+.client-row-actions .button,
+.horse-row-actions .button,
+.reproduction-row-actions .button,
+.finance-row-actions .button,
+.provider-row-actions .button,
 .provider-small-button {
   min-height: 34px;
   padding: 0 10px;
@@ -2489,9 +2558,16 @@ input:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .client-record-form,
+  .client-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
   .horse-form-full,
   .horse-product-note,
-  .horse-detail-full {
+  .horse-detail-full,
+  .client-record-field--full,
+  .client-detail-full {
     grid-column: auto;
   }
 

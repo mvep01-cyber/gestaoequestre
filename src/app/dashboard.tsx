@@ -798,6 +798,7 @@ export function Dashboard({
     useState<RecipientFormState>({ ...recipientFormDefaults });
   const [showClientForm, setShowClientForm] = useState(false);
   const [clientForm, setClientForm] = useState<ClientFormState>(clientFormDefaults);
+  const [selectedClient, setSelectedClient] = useState<ClientRecord | null>(null);
   const isOperational = role === "OPERACIONAL";
   const isHaras = plan === "HARAS";
   const isSuperAdmin = role === "SUPER_ADMIN";
@@ -1493,6 +1494,30 @@ export function Dashboard({
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function openClientForm(client?: ClientRecord) {
+    setFeedback("");
+    setSelectedClient(null);
+    setClientForm(
+      client
+        ? {
+            ...client,
+            telefone_whatsapp: client.telefone_whatsapp ?? "",
+            documento: client.documento ?? "",
+            cpf: client.cpf ?? "",
+            rg: client.rg ?? "",
+            data_nascimento: client.data_nascimento ?? "",
+            idade: client.idade?.toString() ?? "",
+            profissao: client.profissao ?? "",
+            endereco_completo: client.endereco_completo ?? "",
+            numero_socio_abccmm: client.numero_socio_abccmm?.toString() ?? "",
+            data_inicio: client.data_inicio ?? "",
+            data_fim: client.data_fim ?? "",
+          }
+        : clientFormDefaults,
+    );
+    setShowClientForm(true);
   }
 
   async function handleUpdateClient(event: FormEvent<HTMLFormElement>) {
@@ -2641,11 +2666,7 @@ export function Dashboard({
             />
           </label>
           {canManageClients && (
-            <button className="button button-primary" onClick={() => {
-              setFeedback("");
-              setClientForm(clientFormDefaults);
-              setShowClientForm(true);
-            }}>
+            <button className="button button-primary" onClick={() => openClientForm()}>
               <Plus size={20} /> Cadastrar cliente
             </button>
           )}
@@ -2689,33 +2710,25 @@ export function Dashboard({
                     )}
                     <td>
                       <div className="client-row-actions">
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setSelectedClient(client)}
+                          aria-label={`Visualizar ${client.nome}`}
+                        >
+                          Visualizar
+                        </button>
                         {canManageClients && (
                           <button
+                            type="button"
                             className="button button-secondary"
-                            onClick={() => {
-                              setFeedback("");
-                              setClientForm({
-                                ...client,
-                                telefone_whatsapp: client.telefone_whatsapp ?? "",
-                                documento: client.documento ?? "",
-                                cpf: client.cpf ?? "",
-                                rg: client.rg ?? "",
-                                data_nascimento: client.data_nascimento ?? "",
-                                idade: client.idade?.toString() ?? "",
-                                profissao: client.profissao ?? "",
-                                endereco_completo: client.endereco_completo ?? "",
-                                numero_socio_abccmm: client.numero_socio_abccmm?.toString() ?? "",
-                                data_inicio: client.data_inicio ?? "",
-                                data_fim: client.data_fim ?? "",
-                              });
-                              setShowClientForm(true);
-                            }}
+                            onClick={() => openClientForm(client)}
                           >
                             Alterar
                           </button>
                         )}
                         {isAdmin && (
-                          <button className="button button-quiet" onClick={() => void handleDeleteClient(client.id)}>
+                          <button type="button" className="button button-quiet" onClick={() => void handleDeleteClient(client.id)}>
                             Excluir
                           </button>
                         )}
@@ -2765,16 +2778,22 @@ export function Dashboard({
         return isAdmin || isClientAccount ? (
           <Suppliers
             demo={demo}
+            isAdmin={isAdmin}
             centerId={providerCenterId}
             onCentersChange={setProviderCenters}
             onCenterChange={setProviderCenterId}
-            onViewProducts={(supplier) => { navigate("products"); setSupplierFilter(supplier); }}
+            onViewProducts={(supplier) => {
+              setProviderCenterId(supplier.cadastro_cte_haras_id);
+              navigate("products");
+              setSupplierFilter(supplier);
+            }}
           />
         ) : renderHome();
       case "providers":
         return isAdmin || isClientAccount ? (
           <ServiceProviders
             demo={demo}
+            isAdmin={isAdmin}
             centerId={providerCenterId}
             onCentersChange={setProviderCenters}
             onCenterChange={setProviderCenterId}
@@ -2784,6 +2803,7 @@ export function Dashboard({
         return isAdmin || isClientAccount ? (
           <Employees
             demo={demo}
+            isAdmin={isAdmin}
             centerId={providerCenterId}
             onCentersChange={setProviderCenters}
             onCenterChange={setProviderCenterId}
@@ -3163,7 +3183,7 @@ export function Dashboard({
           if (event.target === event.currentTarget) setShowClientForm(false);
         }}>
           <section
-            className="modal-card client-modal-card"
+            className="modal-card client-modal-card client-modal-card--record"
             role="dialog"
             aria-modal="true"
             aria-labelledby="client-form-title"
@@ -3181,102 +3201,125 @@ export function Dashboard({
                 <X size={22} />
               </button>
             </div>
-            <form className="client-form" onSubmit={(event) => void (clientForm.id ? handleUpdateClient(event) : handleCreateClient(event))}>
-              <label htmlFor="client-name">Nome do cliente</label>
-              <input
-                id="client-name"
-                autoFocus
-                required
-                value={clientForm.nome}
-                onChange={(event) => setClientForm({ ...clientForm, nome: event.target.value })}
-                placeholder="Ex.: João da Silva"
-              />
-              <label htmlFor="client-phone">Telefone WhatsApp</label>
-              <input
-                id="client-phone"
-                required
-                value={clientForm.telefone_whatsapp}
-                onChange={(event) => setClientForm({ ...clientForm, telefone_whatsapp: event.target.value })}
-                placeholder="Ex.: (11) 91234-5678"
-              />
-              <label htmlFor="client-document">Documento</label>
-              <input
-                id="client-document"
-                required
-                value={clientForm.documento}
-                onChange={(event) => setClientForm({ ...clientForm, documento: event.target.value })}
-                placeholder="Ex.: 123.456.789-09"
-              />
-              <label htmlFor="client-cpf">CPF</label>
-              <input
-                id="client-cpf"
-                required
-                maxLength={14}
-                inputMode="numeric"
-                value={clientForm.cpf}
-                onChange={(event) => setClientForm({ ...clientForm, cpf: event.target.value })}
-                placeholder="Ex.: 123.456.789-09"
-              />
-              <label htmlFor="client-rg">RG</label>
-              <input
-                id="client-rg"
-                required
-                value={clientForm.rg}
-                onChange={(event) => setClientForm({ ...clientForm, rg: event.target.value })}
-                placeholder="Ex.: 12.345.678-9"
-              />
-              <label htmlFor="client-birthdate">Data de nascimento</label>
-              <input
-                id="client-birthdate"
-                type="date"
-                required
-                value={clientForm.data_nascimento}
-                onChange={(event) => setClientForm({ ...clientForm, data_nascimento: event.target.value })}
-              />
-              <label htmlFor="client-profession">Profissão</label>
-              <input
-                id="client-profession"
-                required
-                value={clientForm.profissao}
-                onChange={(event) => setClientForm({ ...clientForm, profissao: event.target.value })}
-                placeholder="Ex.: Agricultor"
-              />
-              <label htmlFor="client-address">Endereço completo</label>
-              <input
-                id="client-address"
-                required
-                value={clientForm.endereco_completo}
-                onChange={(event) => setClientForm({ ...clientForm, endereco_completo: event.target.value })}
-                placeholder="Ex.: Rua das Flores, 123"
-              />
-              <label htmlFor="client-member-number">Número de sócio ABCCMM</label>
-              <input
-                id="client-member-number"
-                type="number"
-                min="0"
-                max="999999.99999"
-                step="any"
-                required
-                value={clientForm.numero_socio_abccmm ?? ""}
-                onChange={(event) => setClientForm({ ...clientForm, numero_socio_abccmm: event.target.value })}
-                placeholder="Ex.: 1234"
-              />
-              <label htmlFor="client-start-date">Data de início</label>
-              <input
-                id="client-start-date"
-                type="date"
-                required
-                value={clientForm.data_inicio}
-                onChange={(event) => setClientForm({ ...clientForm, data_inicio: event.target.value })}
-              />
-              <label htmlFor="client-end-date">Data de fim</label>
-              <input
-                id="client-end-date"
-                type="date"
-                required
-                value={clientForm.data_fim}
-                onChange={(event) => setClientForm({ ...clientForm, data_fim: event.target.value })}
-              />
+            <form className="client-form client-record-form" onSubmit={(event) => void (clientForm.id ? handleUpdateClient(event) : handleCreateClient(event))}>
+              <div className="client-record-field">
+                <label htmlFor="client-name">Nome do cliente</label>
+                <input
+                  id="client-name"
+                  autoFocus
+                  required
+                  value={clientForm.nome}
+                  onChange={(event) => setClientForm({ ...clientForm, nome: event.target.value })}
+                  placeholder="Ex.: João da Silva"
+                />
+              </div>
+              <div className="client-record-field">
+                <label htmlFor="client-phone">Telefone WhatsApp</label>
+                <input
+                  id="client-phone"
+                  required
+                  value={clientForm.telefone_whatsapp}
+                  onChange={(event) => setClientForm({ ...clientForm, telefone_whatsapp: event.target.value })}
+                  placeholder="Ex.: (11) 91234-5678"
+                />
+              </div>
+              <div className="client-record-field">
+                <label htmlFor="client-document">Documento</label>
+                <input
+                  id="client-document"
+                  required
+                  value={clientForm.documento}
+                  onChange={(event) => setClientForm({ ...clientForm, documento: event.target.value })}
+                  placeholder="Ex.: 123.456.789-09"
+                />
+              </div>
+              <div className="client-record-field">
+                <label htmlFor="client-cpf">CPF</label>
+                <input
+                  id="client-cpf"
+                  required
+                  maxLength={14}
+                  inputMode="numeric"
+                  value={clientForm.cpf}
+                  onChange={(event) => setClientForm({ ...clientForm, cpf: event.target.value })}
+                  placeholder="Ex.: 123.456.789-09"
+                />
+              </div>
+              <div className="client-record-field">
+                <label htmlFor="client-rg">RG</label>
+                <input
+                  id="client-rg"
+                  required
+                  value={clientForm.rg}
+                  onChange={(event) => setClientForm({ ...clientForm, rg: event.target.value })}
+                  placeholder="Ex.: 12.345.678-9"
+                />
+              </div>
+              <div className="client-record-field">
+                <label htmlFor="client-birthdate">Data de nascimento</label>
+                <input
+                  id="client-birthdate"
+                  type="date"
+                  required
+                  value={clientForm.data_nascimento}
+                  onChange={(event) => setClientForm({ ...clientForm, data_nascimento: event.target.value })}
+                />
+              </div>
+              <div className="client-record-field">
+                <label htmlFor="client-profession">Profissão</label>
+                <input
+                  id="client-profession"
+                  required
+                  value={clientForm.profissao}
+                  onChange={(event) => setClientForm({ ...clientForm, profissao: event.target.value })}
+                  placeholder="Ex.: Agricultor"
+                />
+              </div>
+              <div className="client-record-field client-record-field--full">
+                <label htmlFor="client-address">Endereço completo</label>
+                <textarea
+                  id="client-address"
+                  rows={3}
+                  required
+                  value={clientForm.endereco_completo}
+                  onChange={(event) => setClientForm({ ...clientForm, endereco_completo: event.target.value })}
+                  placeholder="Ex.: Rua das Flores, 123"
+                />
+              </div>
+              <div className="client-record-field">
+                <label htmlFor="client-member-number">Número de sócio ABCCMM</label>
+                <input
+                  id="client-member-number"
+                  type="number"
+                  min="0"
+                  max="999999.99999"
+                  step="any"
+                  required
+                  value={clientForm.numero_socio_abccmm ?? ""}
+                  onChange={(event) => setClientForm({ ...clientForm, numero_socio_abccmm: event.target.value })}
+                  placeholder="Ex.: 1234"
+                />
+              </div>
+              <div className="client-record-field">
+                <label htmlFor="client-start-date">Data de início</label>
+                <input
+                  id="client-start-date"
+                  type="date"
+                  required
+                  value={clientForm.data_inicio}
+                  onChange={(event) => setClientForm({ ...clientForm, data_inicio: event.target.value })}
+                />
+              </div>
+              <div className="client-record-field">
+                <label htmlFor="client-end-date">Data de fim</label>
+                <input
+                  id="client-end-date"
+                  type="date"
+                  required
+                  value={clientForm.data_fim}
+                  onChange={(event) => setClientForm({ ...clientForm, data_fim: event.target.value })}
+                />
+              </div>
               {feedback && <p className="client-form-error" role="alert">{feedback}</p>}
               <div className="modal-actions">
                 <button
@@ -3291,6 +3334,76 @@ export function Dashboard({
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {selectedClient && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSelectedClient(null);
+          }}
+        >
+          <section
+            className="modal-card client-modal-card client-modal-card--record"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="client-detail-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">Dados cadastrais</span>
+                <h2 id="client-detail-title">Visualizar cliente</h2>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Fechar"
+                onClick={() => setSelectedClient(null)}
+              >
+                <X size={22} />
+              </button>
+            </div>
+            <div className="client-detail-grid">
+              <div><span>Nome do cliente</span><strong>{selectedClient.nome}</strong></div>
+              <div><span>Telefone WhatsApp</span><strong>{selectedClient.telefone_whatsapp || "—"}</strong></div>
+              <div><span>Documento</span><strong>{selectedClient.documento || "—"}</strong></div>
+              <div><span>CPF</span><strong>{selectedClient.cpf || "—"}</strong></div>
+              <div><span>RG</span><strong>{selectedClient.rg || "—"}</strong></div>
+              <div><span>Data de nascimento</span><strong>{formatHorseDate(selectedClient.data_nascimento)}</strong></div>
+              <div><span>Idade</span><strong>{selectedClient.idade ?? "—"}</strong></div>
+              <div><span>Profissão</span><strong>{selectedClient.profissao || "—"}</strong></div>
+              <div className="client-detail-full"><span>Endereço completo</span><strong>{selectedClient.endereco_completo || "—"}</strong></div>
+              <div><span>Número de sócio ABCCMM</span><strong>{selectedClient.numero_socio_abccmm ?? "—"}</strong></div>
+              <div><span>Data de início</span><strong>{formatHorseDate(selectedClient.data_inicio)}</strong></div>
+              <div><span>Data de fim</span><strong>{formatHorseDate(selectedClient.data_fim)}</strong></div>
+              {isAdmin && (
+                <div className="client-detail-full">
+                  <span>CTE/Haras cadastrado</span>
+                  <strong>
+                    {selectedClient.cte_haras_nome
+                      ? `${selectedClient.cte_haras_tipo === "CTE" ? "CTE" : "Haras"} — ${selectedClient.cte_haras_nome}`
+                      : "Sem vínculo CTE/Haras"}
+                  </strong>
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              {canManageClients && (
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => openClientForm(selectedClient)}
+                >
+                  Alterar
+                </button>
+              )}
+              <button type="button" className="button button-quiet" onClick={() => setSelectedClient(null)}>
+                Fechar
+              </button>
+            </div>
           </section>
         </div>
       )}

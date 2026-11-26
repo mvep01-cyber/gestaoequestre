@@ -46,14 +46,16 @@ async function loadEmployees(): Promise<EmployeeData> {
   return result;
 }
 
-export function Employees({ demo, centerId, onCentersChange, onCenterChange }: {
+export function Employees({ demo, isAdmin, centerId, onCentersChange, onCenterChange }: {
   demo: boolean;
+  isAdmin: boolean;
   centerId: string;
   onCentersChange: Dispatch<SetStateAction<ProviderCenter[]>>;
   onCenterChange: Dispatch<SetStateAction<string>>;
 }) {
   const [data, setData] = useState<EmployeeData | null>(null);
   const [form, setForm] = useState<EmployeeFields | null>(null);
+  const [formCenterId, setFormCenterId] = useState(centerId);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [viewing, setViewing] = useState(false);
   const [search, setSearch] = useState("");
@@ -90,7 +92,7 @@ export function Employees({ demo, centerId, onCentersChange, onCenterChange }: {
       const response = await fetch("/api/employees", {
         method: editingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, ...(editingId ? { id: editingId } : { cadastro_cte_haras_id: centerId }) }),
+        body: JSON.stringify({ ...form, ...(editingId ? { id: editingId } : { cadastro_cte_haras_id: isAdmin ? formCenterId : centerId }) }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "Não foi possível salvar o funcionário.");
@@ -118,13 +120,14 @@ export function Employees({ demo, centerId, onCentersChange, onCenterChange }: {
   if (demo) return <p className="feedback-message">O cadastro de funcionários exige uma conexão com o banco de dados.</p>;
   if (loading) return <p>Carregando funcionários...</p>;
   if (!data) return <p className="feedback-message" role="alert">{feedback}</p>;
-  const filtered = data.employees.filter((employee) => employee.cadastro_cte_haras_id === centerId &&
+  const filtered = data.employees.filter((employee) => (isAdmin || employee.cadastro_cte_haras_id === centerId) &&
     columns.map((key) => displayValue(key, employee[key])).join(" ")
       .toLocaleLowerCase("pt-BR").includes(search.trim().toLocaleLowerCase("pt-BR")),
   );
   const open = (employee?: Employee, readOnly = false) => {
     setFeedback("");
     setEditingId(employee?.id ?? null);
+    setFormCenterId(employee?.cadastro_cte_haras_id ?? centerId);
     setViewing(readOnly);
     setForm(employee ? {
       nome: employee.nome, cpf: employee.cpf, rg: employee.rg, endereco: employee.endereco,
@@ -134,6 +137,10 @@ export function Employees({ demo, centerId, onCentersChange, onCenterChange }: {
     } : { ...empty });
   };
   const columnFields = [...fields].sort((a, b) => columns.indexOf(a.key) - columns.indexOf(b.key));
+  const editingEmployee = editingId ? data.employees.find((employee) => employee.id === editingId) : undefined;
+  const editingCenterName = editingEmployee
+    ? data.centers.find((center) => center.id === editingEmployee.cadastro_cte_haras_id)?.nome
+    : undefined;
   return (
     <>
       {feedback && !form && <p className="feedback-message" role="status">{feedback}</p>}
@@ -143,15 +150,21 @@ export function Employees({ demo, centerId, onCentersChange, onCenterChange }: {
       </div>
       {data.centers.length === 0 && <p role="status">Nenhum CTE/Haras disponível para este cadastro.</p>}
       <div className="provider-table-wrap"><table className="provider-table">
-        <thead><tr>{columnFields.map(({ key, column }) => <th scope="col" key={key}>{column}</th>)}<th scope="col">Ações</th></tr></thead>
+        <thead><tr>{isAdmin ? <>
+          <th scope="col">Nome do CTE / Haras</th>
+          <th scope="col">Nome do Funcionário</th>
+        </> : columnFields.map(({ key, column }) => <th scope="col" key={key}>{column}</th>)}<th scope="col">Ações</th></tr></thead>
         <tbody>{filtered.map((employee) => <tr key={employee.id}>
-          {columnFields.map(({ key }) => <td key={key}>{displayValue(key, employee[key])}</td>)}
+          {isAdmin ? <>
+            <td>{data.centers.find((center) => center.id === employee.cadastro_cte_haras_id)?.nome ?? "—"}</td>
+            <td>{employee.nome}</td>
+          </> : columnFields.map(({ key }) => <td key={key}>{displayValue(key, employee[key])}</td>)}
           <td><div className="provider-row-actions">
             <button className="button button-secondary provider-small-button" onClick={() => open(employee, true)}>Visualizar</button>
             <button className="button button-quiet provider-small-button" onClick={() => open(employee)}>Alterar</button>
           </div></td>
         </tr>)}
-        {filtered.length === 0 && <tr><td className="provider-empty" colSpan={columns.length + 1}>Nenhum registro encontrado.</td></tr>}
+        {filtered.length === 0 && <tr><td className="provider-empty" colSpan={isAdmin ? 3 : columns.length + 1}>Nenhum registro encontrado.</td></tr>}
         </tbody>
       </table></div>
       <div className="provider-note">Cada funcionário está vinculado a um único CTE/Haras. O valor informado corresponde à diária ou ao mês, conforme o tipo de contratação.</div>
@@ -162,16 +175,30 @@ export function Employees({ demo, centerId, onCentersChange, onCenterChange }: {
           </div>
           {viewing ? <>
             <div className="provider-form-grid">
+              {isAdmin && <div className="provider-field"><span>CTE/Haras</span><strong>{editingCenterName ?? ""}</strong></div>}
               {columnFields.map(({ key, column }) => <div className="provider-field" key={key}><span>{column}</span><strong>{displayValue(key, form[key])}</strong></div>)}
             </div>
             <div className="provider-form-actions"><button type="button" className="button button-secondary" onClick={() => setForm(null)}>Fechar</button></div>
           </> : <form onSubmit={(event) => void submit(event)}>
             <div className="provider-form-grid">
-              <label className="provider-field" htmlFor="employee-center">CTE/Haras
-                <select id="employee-center" disabled value={centerId}>
-                  {data.centers.map((center) => <option key={center.id} value={center.id}>{center.nome}</option>)}
-                </select>
-              </label>
+                {isAdmin && editingId ? (
+                  <label className="provider-field" htmlFor="employee-center">CTE/Haras
+                    <input id="employee-center" readOnly value={editingCenterName ?? ""} />
+                  </label>
+                ) : isAdmin ? (
+                  <label className="provider-field" htmlFor="employee-center">CTE/Haras
+                    <select id="employee-center" required value={formCenterId} onChange={(event) => setFormCenterId(event.target.value)}>
+                      <option value="">Selecione</option>
+                      {data.centers.map((center) => <option key={center.id} value={center.id}>{center.nome}</option>)}
+                    </select>
+                  </label>
+              ) : (
+                <label className="provider-field" htmlFor="employee-center">CTE/Haras
+                  <select id="employee-center" disabled value={centerId}>
+                    {data.centers.map((center) => <option key={center.id} value={center.id}>{center.nome}</option>)}
+                  </select>
+                </label>
+              )}
               {fields.map(({ key, label, type }) => <label className="provider-field" htmlFor={`employee-${key}`} key={key}>
                 {label}
                 {key === "estado" || key === "tipo_contratacao" ? <select id={`employee-${key}`} value={form[key]} onChange={(event) => setForm({ ...form, [key]: event.target.value })}>
@@ -183,10 +210,16 @@ export function Employees({ demo, centerId, onCentersChange, onCenterChange }: {
                   step={type === "number" ? "0.01" : undefined} value={form[key]} onChange={(event) => setForm({ ...form, [key]: event.target.value })} />}
               </label>)}
             </div>
-            <p className="provider-form-note">O nome do funcionário é obrigatório. Para trocar o centro, feche o formulário e selecione-o no topo.</p>
+            <p className="provider-form-note">
+              {isAdmin && !editingId
+                ? "O nome do funcionário é obrigatório. Selecione o CTE/Haras ao qual ele será vinculado."
+                : isAdmin
+                  ? "O nome do funcionário é obrigatório. O CTE/Haras vinculado não pode ser alterado aqui."
+                  : "O nome do funcionário é obrigatório. Para trocar o centro, feche o formulário e selecione-o no topo."}
+            </p>
             {feedback && <p className="client-form-error" role="alert">{feedback}</p>}
             <div className="provider-form-actions"><button type="button" className="button button-quiet" disabled={saving} onClick={() => setForm(null)}>Cancelar</button>
-              <button className="button button-primary" disabled={saving || !centerId}>{saving ? "Salvando..." : "Salvar"}</button></div>
+              <button className="button button-primary" disabled={saving || (isAdmin ? !formCenterId : !centerId)}>{saving ? "Salvando..." : "Salvar"}</button></div>
           </form>}
         </section>
       </div>}
