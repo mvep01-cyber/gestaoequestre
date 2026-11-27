@@ -155,8 +155,8 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   if (!isSameOrigin(request)) return Response.json({ error: "Origem não autorizada." }, { status: 403 });
   const user = await authorizedUser();
-  if (!user || user.perfil !== "CLIENTE" || !user.tenant_id || !user.cadastro_cte_haras_id) {
-    return Response.json({ error: "Somente CTE/Haras pode alterar produtos." }, { status: 403 });
+  if (!user) {
+    return Response.json({ error: "Acesso não autorizado." }, { status: 403 });
   }
   let body: unknown;
   try {
@@ -179,10 +179,11 @@ export async function PATCH(request: Request) {
     const result = await getPool().query(
       `update public.produtos
        set descricao = $1, valor = $2
-       where id = $3 and tenant_id = $4 and cadastro_cte_haras_id = $5
-         and data_inicio > ${productTodaySql} and data_fim = '9999-12-31'::date
+       where id = $3 and ($4::boolean or (tenant_id = $5 and cadastro_cte_haras_id = $6))
+         and (data_inicio > ${productTodaySql} or ($4::boolean and data_inicio = ${productTodaySql}))
+         and data_fim = '9999-12-31'::date
        returning id`,
-      [descricao, valor, input.id, user.tenant_id, user.cadastro_cte_haras_id],
+      [descricao, valor, input.id, user.perfil === "ADMIN", user.tenant_id, user.cadastro_cte_haras_id],
     );
     if (!result.rowCount) {
       return Response.json({ error: "Produto não encontrado ou não disponível para alteração." }, { status: 404 });

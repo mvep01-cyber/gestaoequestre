@@ -124,8 +124,10 @@ credenciais e armazenamento local de arquivos. Não há serviço Supabase.
 - Fornecedores seguem a mesma regra de acesso. Cada produto exige um fornecedor
   cadastrado no mesmo CTE/Haras; "Ver produtos" filtra a lista pelo fornecedor.
 - Na tela de produtos, a seleção de centro filtra a lista e a visualização
-  mostra os detalhes de cada vigência. As permissões de alteração permanecem
-  restritas às versões futuras elegíveis.
+  mostra os detalhes de cada vigência. Para CTE/Haras, a lista mostra o centro
+  sem as colunas de código e datas. CTE/Haras pode alterar descrição e valor de
+  versões futuras com fim em 31/12/9999; ADMIN também pode alterá-las quando
+  começam hoje. Cadastro e exclusão continuam restritos ao CTE/Haras.
 - O Financeiro ADMIN usa uma base própria. O Financeiro CTE/Haras permanece na
   base operacional; os dados financeiros dos dois módulos não são copiados ou
   combinados.

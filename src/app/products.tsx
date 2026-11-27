@@ -50,7 +50,8 @@ function formatDate(value: string) {
   return `${day}/${month}/${year}`;
 }
 
-export function Products({ canCreate, demo, centerId, onCentersChange, onCenterChange, supplierFilter, onClearSupplier }: {
+export function Products({ isAdmin, canCreate, demo, centerId, onCentersChange, onCenterChange, supplierFilter, onClearSupplier }: {
+  isAdmin: boolean;
   canCreate: boolean;
   demo: boolean;
   centerId: string;
@@ -181,15 +182,15 @@ export function Products({ canCreate, demo, centerId, onCentersChange, onCenterC
       {supplierFilter && <div className="provider-note">Produtos de <strong>{supplierFilter.nome}</strong> <button type="button" className="button button-quiet provider-small-button" onClick={onClearSupplier}>Ver todos</button></div>}
         <div className="provider-table-wrap">
           <table className="provider-table">
-            <thead><tr><th scope="col">Fornecedor</th><th scope="col">Código</th><th scope="col">Nome</th><th scope="col">Marca</th><th scope="col">Valor</th><th scope="col">Início</th><th scope="col">Fim</th><th scope="col">Ações</th></tr></thead>
+            <thead><tr>{!isAdmin && <th scope="col">CTE/Haras</th>}<th scope="col">Fornecedor</th>{isAdmin && <th scope="col">Código</th>}<th scope="col">Nome</th><th scope="col">Marca</th><th scope="col">Valor</th>{isAdmin && <><th scope="col">Início</th><th scope="col">Fim</th></>}<th scope="col">Ações</th></tr></thead>
             <tbody>{filtered.map((product) => (
               <tr key={product.id}>
-                <td>{product.fornecedor_nome}</td><td>{product.codigo}</td><td>{product.nome}</td><td>{product.marca || "—"}</td>
+                {!isAdmin && <td>{product.cadastro_nome}</td>}<td>{product.fornecedor_nome}</td>{isAdmin && <td>{product.codigo}</td>}<td>{product.nome}</td><td>{product.marca || "—"}</td>
                 <td>{Number(product.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
-                <td>{formatDate(product.data_inicio)}</td><td>{formatDate(product.data_fim)}</td>
+                {isAdmin && <><td>{formatDate(product.data_inicio)}</td><td>{formatDate(product.data_fim)}</td></>}
                 <td><div className="provider-row-actions">
                   <button type="button" className="button button-secondary provider-small-button" disabled={saving} onClick={() => { setFeedback(""); setViewing(product); }}>Visualizar</button>
-                  {canCreate && product.data_inicio > data.hoje && product.data_fim === "9999-12-31" && (
+                  {(isAdmin || canCreate) && (product.data_inicio > data.hoje || (isAdmin && product.data_inicio === data.hoje)) && product.data_fim === "9999-12-31" && (
                     <button className="button button-quiet provider-small-button" disabled={saving} onClick={() => {
                       setFeedback("");
                       setEditingId(product.id);
@@ -210,11 +211,11 @@ export function Products({ canCreate, demo, centerId, onCentersChange, onCenterC
                 </div></td>
               </tr>
             ))}
-            {filtered.length === 0 && <tr><td className="provider-empty" colSpan={8}>Nenhum registro encontrado.</td></tr>}
+            {filtered.length === 0 && <tr><td className="provider-empty" colSpan={isAdmin ? 8 : 6}>Nenhum registro encontrado.</td></tr>}
             </tbody>
           </table>
         </div>
-      <div className="provider-note">Cada produto pertence a um fornecedor do mesmo CTE/Haras. A alteração e a exclusão estão disponíveis para vigências futuras elegíveis.</div>
+      <div className="provider-note">Cada produto pertence a um fornecedor do mesmo CTE/Haras. {isAdmin ? "A alteração está disponível para vigências elegíveis iniciadas hoje ou no futuro." : "A alteração e a exclusão estão disponíveis para vigências futuras elegíveis."}</div>
       {(form || viewing) && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setForm(null); setViewing(null); } }}>
           <section className="modal-card provider-modal" role="dialog" aria-modal="true" aria-labelledby="product-form-title">
@@ -236,9 +237,13 @@ export function Products({ canCreate, demo, centerId, onCentersChange, onCenterC
             </> : form && <form onSubmit={(event) => void submit(event)}>
               <div className="provider-form-grid">
               <label className="provider-field" htmlFor="product-center">CTE/Haras
-                <select id="product-center" disabled value={centerId}>
-                  {data.centers.map((center) => <option key={center.id} value={center.id}>{center.nome}</option>)}
-                </select>
+                {!isAdmin && !editingId ? (
+                  <input id="product-center" readOnly value={data.centers.find((center) => center.id === centerId)?.nome ?? ""} />
+                ) : (
+                  <select id="product-center" disabled value={centerId}>
+                    {data.centers.map((center) => <option key={center.id} value={center.id}>{center.nome}</option>)}
+                  </select>
+                )}
               </label>
               <label className="provider-field" htmlFor="product-supplier">Fornecedor responsável
                 <select id="product-supplier" required disabled={Boolean(editingId)} value={form.fornecedor_id} onChange={(event) => setForm({ ...form, fornecedor_id: event.target.value })}>

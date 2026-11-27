@@ -2805,7 +2805,7 @@ export function Dashboard({
       case "clients":
         return renderClients();
       case "products":
-        return isAdmin || isClientAccount ? <Products canCreate={isClientAccount} demo={demo} centerId={providerCenterId}
+        return isAdmin || isClientAccount ? <Products isAdmin={isAdmin} canCreate={isClientAccount} demo={demo} centerId={providerCenterId}
           onCentersChange={setProviderCenters} onCenterChange={setProviderCenterId}
           supplierFilter={supplierFilter} onClearSupplier={() => setSupplierFilter(null)} /> : renderHome();
       case "suppliers":

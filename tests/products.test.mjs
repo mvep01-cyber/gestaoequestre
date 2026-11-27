@@ -236,7 +236,15 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal((await (await clientB("/api/products")).json()).products[0].data_fim, "9999-12-31");
 
     const changes = { id: products[0].id, descricao: "Descrição alterada", valor: "35.75" };
-    assert.equal((await update(admin, changes)).status, 403);
+    const adminChanges = { ...changes, descricao: "Alteração pelo ADMIN", valor: "30.00" };
+    assert.equal((await update(admin, adminChanges)).status, 200);
+    const adminUpdated = (await (await clientA("/api/products")).json()).products[0];
+    assert.equal(adminUpdated.descricao, adminChanges.descricao);
+    assert.equal(adminUpdated.valor, adminChanges.valor);
+    assert.equal((await update(admin, { ...changes, nome: "Tentativa indevida" })).status, 400);
+    assert.equal((await update(admin, { ...changes, id: products[1].id })).status, 404);
+    const pastProductId = (await (await clientB("/api/products")).json()).products[0].id;
+    assert.equal((await update(admin, { ...changes, id: pastProductId })).status, 404);
     assert.equal((await update(operational, changes)).status, 403);
     assert.equal((await update(clientB, changes)).status, 404);
     assert.equal((await update(clientA, { ...changes, nome: "Tentativa indevida" })).status, 400);
@@ -259,10 +267,36 @@ test("produtos isolam cadastros, preservam histórico e validam vigências", { t
     assert.equal(endLimited.status, 201);
     const endLimitedId = (await endLimited.json()).id;
     assert.equal((await update(clientA, { ...changes, id: endLimitedId })).status, 404);
+    assert.equal((await update(admin, { ...changes, id: endLimitedId })).status, 404);
     const startsToday = await create(clientA, { ...input, codigo: "HOJE", data_inicio: dates.hoje });
     assert.equal(startsToday.status, 201);
     const startsTodayId = (await startsToday.json()).id;
     assert.equal((await update(clientA, { ...changes, id: startsTodayId })).status, 404);
+    assert.equal((await update(admin, { ...changes, id: startsTodayId })).status, 200);
+    const todayUpdated = (await db.query("select descricao, valor::text from produtos where id = $1", [startsTodayId])).rows[0];
+    assert.equal(todayUpdated.descricao, changes.descricao);
+    assert.equal(todayUpdated.valor, changes.valor);
+
+    const otherTenant = (await db.query("insert into tenants (nome, plano) values ('Outro centro', 'HARAS') returning id")).rows[0].id;
+    const otherCenter = (await db.query(
+      `insert into cadastros_cte_haras
+       (tenant_id,tipo_cadastro,nome,telefone_whatsapp,documento,cpf,rg,data_nascimento,idade,profissao,endereco_completo,numero_socio_abccmm,data_inicio,data_fim)
+       select $1,'HARAS','Outro haras',telefone_whatsapp,documento,cpf,rg,data_nascimento,idade,profissao,endereco_completo,numero_socio_abccmm,data_inicio,data_fim
+       from cadastros_cte_haras where id = $2 returning id`,
+      [otherTenant, a],
+    )).rows[0].id;
+    const otherSupplier = (await db.query(
+      "insert into fornecedores (tenant_id,cadastro_cte_haras_id,nome) values ($1,$2,'Outro fornecedor') returning id",
+      [otherTenant, otherCenter],
+    )).rows[0].id;
+    const otherProduct = (await db.query(
+      `insert into produtos (tenant_id,cadastro_cte_haras_id,fornecedor_id,codigo,nome,valor,data_inicio,data_fim)
+       values ($1,$2,$3,'OUTRO','Outro produto',1,$4,'9999-12-31') returning id`,
+      [otherTenant, otherCenter, otherSupplier, dates.amanha],
+    )).rows[0].id;
+    assert.equal((await update(clientA, { ...changes, id: otherProduct })).status, 404);
+    assert.equal((await update(admin, { ...adminChanges, id: otherProduct })).status, 200);
+    assert.equal((await db.query("select descricao from produtos where id = $1", [otherProduct])).rows[0].descricao, adminChanges.descricao);
 
     assert.equal((await remove(admin, products[0].id)).status, 403);
     assert.equal((await remove(operational, products[0].id)).status, 403);
